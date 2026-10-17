@@ -1,6 +1,8 @@
-# Vultr VM deployment. Copy backend/.env.example -> backend/.env first.
+# Vultr VM deployment. Copy backend/.env.example -> backend/.env first (no inline comments).
 #   docker compose up -d --build
-#   docker compose exec -T timescaledb psql -U postgres -d app < db/schema.sql
+# Schema: apply db/schema.sql to whichever database DATABASE_URL points at, e.g.
+#   docker compose exec -T timescaledb psql -U postgres -d app < db/schema.sql        (local)
+#   docker run --rm -i timescale/timescaledb:latest-pg16 psql "$DATABASE_URL" < db/schema.sql  (Tiger Cloud)
 services:
   timescaledb:
     image: timescale/timescaledb:latest-pg16
@@ -19,12 +21,12 @@ services:
 
   api:
     build: ./backend
+    # All settings come from backend/.env. Point DATABASE_URL at Tiger Cloud for the real deployment,
+    # or at postgresql://postgres:postgres@timescaledb:5432/app to use the local container below.
     env_file: ./backend/.env
-    environment:
-      DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@timescaledb:5432/app}
     depends_on:
       timescaledb:
-        condition: service_healthy
+        condition: service_started
     restart: unless-stopped
     expose:
       - "8000"
