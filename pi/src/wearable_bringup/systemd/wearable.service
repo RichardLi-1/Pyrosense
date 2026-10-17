@@ -1,0 +1,20 @@
+# /etc/systemd/system/wearable.service
+# sudo cp ~/ros2_ws/src/hazard/wearable_bringup/systemd/wearable.service /etc/systemd/system/
+# sudo systemctl enable --now wearable
+# Attach with:  tmux attach -t ros
+[Unit]
+Description=Wearable LiDAR/VOC mapper (tmux session "ros")
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=forking
+User=htvteam3
+WorkingDirectory=/home/htvteam3
+ExecStart=/usr/bin/tmux new-session -d -s ros 'source /opt/ros/jazzy/setup.bash && source /home/htvteam3/ros2_ws/install/setup.bash && ros2 launch wearable_bringup mapping.launch.py session:=auto; exec bash'
+ExecStop=/usr/bin/tmux kill-session -t ros
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,5 @@
+# base_link -> sensor offsets in metres / radians. MEASURE WITH A RULER and update.
+# base_link = body origin (centre of the mount at the LiDAR's height). z of the laser is its
+# height above that origin; SLAM ignores z but the tree stays honest.
+laser:    {x: 0.0,  y: 0.0, z: 0.0,  yaw: 0.0, pitch: 0.0, roll: 0.0}
+voc_link: {x: 0.05, y: 0.0, z: -0.05, yaw: 0.0, pitch: 0.0, roll: 0.0}

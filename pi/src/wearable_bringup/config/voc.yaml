@@ -1,0 +1,15 @@
+voc_driver:
+  ros__parameters:
+    chip: sgp30            # sgp30 | fake  (overridden by launch arg chip:=)
+    i2c_bus: 1
+    rate_hz: 2.0
+    warmup_seconds: 15.0   # SGP30 returns 0 ppb for ~15 s after iaq_init
+    frame_id: voc_link
+voc_mapper:
+  ros__parameters:
+    sensor_lag_seconds: 12.0   # calibrate: uncap a marker at a known spot, time the rise
+    publish_period_s: 1.0
+    max_points: 50000
+    map_frame: map
+    base_frame: base_link
+    tf_timeout_s: 0.2
