@@ -10,8 +10,12 @@ Parameters
   map_frame           string (default map)
   base_frame          string (default base_link)
   tf_timeout_s        float  (default 0.2)
+  pose_rate_hz        float  (default 10.0; 0 disables) publish map->base_link as /pose
 Service
   /voc_mapper/reset   std_srvs/Trigger  -> clear the buffer (start of a session)
+
+Also publishes /pose (geometry_msgs/PoseStamped, map frame) at pose_rate_hz from the tf tree, because
+slam_toolbox only emits its own pose when the wearer has moved > minimum_travel_distance.
 """
 from __future__ import annotations
 
@@ -26,6 +30,7 @@ from rclpy.time import Time
 from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener, LookupException, ExtrapolationException, ConnectivityException
 
+from geometry_msgs.msg import PoseStamped
 from sensor_msgs.msg import PointCloud2
 from voc_msgs.msg import VocReading
 
@@ -41,6 +46,7 @@ class VocMapper(Node):
         self.declare_parameter("map_frame", "map")
         self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("tf_timeout_s", 0.2)
+        self.declare_parameter("pose_rate_hz", 10.0)
         self.lag = float(self.get_parameter("sensor_lag_seconds").value)
         self.map_frame = self.get_parameter("map_frame").value
         self.base_frame = self.get_parameter("base_frame").value
@@ -64,6 +70,11 @@ class VocMapper(Node):
         self.create_service(Trigger, "/voc_mapper/reset", self.on_reset)
         self.create_timer(float(self.get_parameter("publish_period_s").value), self.publish)
         self.create_timer(30.0, self.report)
+        pose_hz = float(self.get_parameter("pose_rate_hz").value)
+        self.pose_pub = self.create_publisher(PoseStamped, "/pose", 10)
+        self._pose_warned = 0.0
+        if pose_hz > 0:
+            self.create_timer(1.0 / pose_hz, self.publish_pose)
         self.get_logger().info(f"lag={self.lag}s max_points={max_points} {self.map_frame}->{self.base_frame}")
 
     def on_voc(self, msg: VocReading) -> None:
@@ -101,6 +112,24 @@ class VocMapper(Node):
         res.message = f"cleared {n} points"
         self.get_logger().info(res.message)
         return res
+
+    def publish_pose(self) -> None:
+        try:
+            tf = self.tf_buffer.lookup_transform(self.map_frame, self.base_frame, Time())
+        except (LookupException, ExtrapolationException, ConnectivityException) as e:
+            now = time.monotonic()
+            if now - self._pose_warned > 10.0:
+                self._pose_warned = now
+                self.get_logger().info(f"no {self.map_frame}->{self.base_frame} yet: {str(e)[:80]}")
+            return
+        msg = PoseStamped()
+        msg.header.stamp = tf.header.stamp
+        msg.header.frame_id = self.map_frame
+        msg.pose.position.x = tf.transform.translation.x
+        msg.pose.position.y = tf.transform.translation.y
+        msg.pose.position.z = tf.transform.translation.z
+        msg.pose.orientation = tf.transform.rotation
+        self.pose_pub.publish(msg)
 
     def report(self) -> None:
         self.get_logger().info(f"points={len(self.points)} dropped_tf={self.dropped} skipped_warmup={self.skipped_warmup}")

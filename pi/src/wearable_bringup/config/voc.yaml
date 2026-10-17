@@ -13,3 +13,4 @@ voc_mapper:
     map_frame: map
     base_frame: base_link
     tf_timeout_s: 0.2
+    pose_rate_hz: 10.0
