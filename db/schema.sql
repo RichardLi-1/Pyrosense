@@ -43,11 +43,14 @@ FROM readings
 GROUP BY bucket, session, cx, cy
 WITH NO DATA;
 
+-- start_offset NULL = no lower bound, so rows that arrive late (DB outage backlog,
+-- replayed walks, a wrong Pi clock) still get materialized. Each run only recomputes
+-- buckets that changed, so this stays cheap. Re-created so existing DBs pick it up.
+SELECT remove_continuous_aggregate_policy('voc_cells', if_exists => TRUE);
 SELECT add_continuous_aggregate_policy('voc_cells',
-  start_offset      => INTERVAL '1 hour',
+  start_offset      => NULL,
   end_offset        => INTERVAL '10 seconds',
-  schedule_interval => INTERVAL '10 seconds',
-  if_not_exists     => TRUE);
+  schedule_interval => INTERVAL '10 seconds');
 
 ALTER TABLE readings SET (
   timescaledb.compress,

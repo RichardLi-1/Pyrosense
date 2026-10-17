@@ -187,7 +187,7 @@ FROM readings
 GROUP BY bucket, session, cx, cy;
 
 SELECT add_continuous_aggregate_policy('voc_cells',
-  start_offset => INTERVAL '1 hour',
+  start_offset => NULL,                 -- no lower bound: late rows still materialize
   end_offset   => INTERVAL '10 seconds',
   schedule_interval => INTERVAL '10 seconds');
 

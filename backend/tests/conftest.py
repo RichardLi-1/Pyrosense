@@ -44,27 +44,44 @@ async def wait_for(cond, timeout=5.0, step=0.02):
     raise AssertionError("timed out waiting for condition")
 
 
-@pytest.fixture(scope="session")
-def pg_url():
+def _admin_url() -> str:
     admin = os.environ.get("TEST_DATABASE_URL")
     if not admin:
         pytest.skip("TEST_DATABASE_URL not set (make test sets it to the local db)")
+    return admin
+
+
+def _create_db(name: str, keep_policy: bool) -> str:
+    admin = _admin_url()
 
     async def setup() -> str:
         try:
             conn = await asyncpg.connect(admin, timeout=3)
         except Exception as e:  # noqa: BLE001
             pytest.skip(f"no database at TEST_DATABASE_URL: {e}")
-        await conn.execute(f"DROP DATABASE IF EXISTS {TEST_DB} WITH (FORCE)")
-        await conn.execute(f"CREATE DATABASE {TEST_DB}")
+        await conn.execute(f"DROP DATABASE IF EXISTS {name} WITH (FORCE)")
+        await conn.execute(f"CREATE DATABASE {name}")
         await conn.close()
-        url = urlunsplit(urlsplit(admin)._replace(path="/" + TEST_DB))
+        url = urlunsplit(urlsplit(admin)._replace(path="/" + name))
         conn = await asyncpg.connect(url)
         await conn.execute(SCHEMA_SQL.read_text())
-        # No background refresh: voc_cells stays fully real-time, so results don't
-        # depend on when the policy job last ran.
-        await conn.execute("SELECT remove_continuous_aggregate_policy('voc_cells')")
+        if not keep_policy:
+            await conn.execute("SELECT remove_continuous_aggregate_policy('voc_cells')")
         await conn.close()
         return url
 
     return asyncio.run(setup())
+
+
+@pytest.fixture(scope="session")
+def pg_url():
+    """No background refresh: voc_cells stays fully real-time, so results don't depend
+    on when the policy job last ran. Tests may use any timestamps."""
+    return _create_db(TEST_DB, keep_policy=False)
+
+
+@pytest.fixture(scope="session")
+def pg_url_with_policy():
+    """Schema exactly as deployed, refresh policy included. Separate database because a
+    refresh moves the watermark, which would hide old-timestamp rows in other tests."""
+    return _create_db(TEST_DB + "_policy", keep_policy=True)

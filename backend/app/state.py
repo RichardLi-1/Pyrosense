@@ -36,6 +36,10 @@ def _key(row: np.ndarray) -> tuple:
     return tuple(np.round(row, 4).tolist())
 
 
+def _keys(rows: np.ndarray) -> list[tuple]:
+    return [tuple(r) for r in np.round(rows, 4).tolist()]
+
+
 class PointTracker:
     """Picks the not-yet-seen points out of each /voc_points message.
 
@@ -77,11 +81,11 @@ class PointTracker:
             if _key(pts[-1]) == self._last:
                 return np.zeros(0, dtype=np.intp)
             # same length, new content: ring buffer at capacity -> set difference
-            idx = np.flatnonzero([_key(p) not in self._seen for p in pts])
+            keys = _keys(pts)
+            idx = np.flatnonzero([k not in self._seen for k in keys])
         self.processed = n
         self._last = _key(pts[-1])
-        for i in idx:
-            self._seen[_key(pts[i])] = None
+        self._seen.update(dict.fromkeys(_keys(pts[idx])))
         if len(self._seen) > self.SEEN_MAX:
             self._seen = dict.fromkeys(list(self._seen)[-self.SEEN_MAX // 2:])
         return idx
