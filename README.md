@@ -14,14 +14,16 @@ Wearable indoor SLAM + gas sensing that builds a live map of airborne hazards in
 2. Samples VOC concentration continuously from a wearable gas sensor.
 3. Fuses the two: every gas reading is stamped with the wearer's current map position.
 4. Streams to a unified dashboard that renders the map, the gas concentration field, the wearer's path, and flags dangerous zones.
+5. Stores every run in **Tiger Cloud** (Postgres + TimescaleDB) so walks can be replayed, compared over time, and reviewed after the incident.
 
 **What's novel.** Indoor SLAM and wearable gas sensing are each well studied, and gas safety in firefighting is a validated problem. We haven't found prior work that integrates the two into a live, spatially-registered hazard map on a wearable platform.
 
 **Stretch features.**
 - Bayesian / Gaussian Process estimation of the gas field (concentration + uncertainty) from sparse samples
-- Temporal tracking of gas movement (plume drift between scans)
+- Temporal tracking of gas movement (plume drift between scans), via TimescaleDB `time_bucket` / continuous aggregates over stored samples
 - Threshold-based danger flags on the map
-- Multi-wearer merging (future)
+- Post-incident replay and history from the database
+- Multi-wearer merging (future). Every row already carries `wearer_id`.
 
 ---
 
@@ -100,48 +102,74 @@ Alternative mount considered: shoulder mount (more stable, less cool). Helmet ch
 
 | Layer | Choice | Notes |
 |---|---|---|
-| Backend | Python FastAPI (or Node) | Consumes rosbridge websocket, holds map + gas point cloud, runs estimation, serves frontend. |
-| Gas field estimation | scikit-learn `GaussianProcessRegressor` (or GPyTorch) | Interpolates a 2D concentration field with uncertainty from sparse points. Threshold the posterior → danger flags. Simpler fallback: per-cell Kalman/occupancy-style update. |
-| Frontend | React/Next or plain HTML + canvas | Occupancy grid + gas heatmap overlay (uncertainty as alpha) + path + current pose + alerts. |
+| Backend | Python 3.12 FastAPI (asyncio) | Consumes the rosbridge websocket, holds live state in memory, runs estimation + alerts, pushes to the dashboard over `/ws/live`, and writes to Tiger Cloud in the background. |
+| Database | **Tiger Cloud** (managed PostgreSQL + TimescaleDB), via `asyncpg` | Hypertables for `gas_samples` and `poses`, plus map snapshots, field estimates, and alerts. A continuous aggregate gives per-cell VOC stats per 10 s. Used for persistence, replay, and history. The live path never waits on it. Schema: [`db/schema.sql`](db/schema.sql). |
+| Gas field estimation | scikit-learn `GaussianProcessRegressor` (or GPyTorch) | Interpolates a 2D concentration field with uncertainty from sparse points. Threshold the posterior → danger flags. Simpler fallback: per-cell mean, either in memory or from the `gas_cells_10s` continuous aggregate. |
+| Frontend | React + Vite + HTML canvas | Occupancy grid + gas heatmap overlay (uncertainty as alpha) + path + current pose + alerts + replay timeline. Talks only to the backend. |
 | Debug viewer | Foxglove Studio | Talks to rosbridge, runs on Mac. Free live view of raw ROS data on day one. |
+
+The Pi never talks to the database. Only the laptop backend holds the Tiger Cloud credentials, in `backend/.env`, which is gitignored.
 
 ### Dev tooling
 
-- Git repo, two top-level folders: `pi/` (ROS 2 workspace) and `dashboard/`.
+- Git repo: `pi/` (ROS 2 workspace), `backend/`, `dashboard/`, `db/` (schema), `docs/`.
 - VS Code Remote-SSH into the Pi.
-- `ros2 bag record` one good walk. Lets dashboard dev continue without hardware and is the fallback demo if the live run hiccups.
+- Tiger Cloud: one service on the Free plan. Apply the schema with `psql "$DATABASE_URL" -f db/schema.sql`. Local fallback: the same schema on `timescale/timescaledb` in Docker.
+- A fake Pi publisher (`backend/tools/fake_pi.py`) emits the interface contract so backend + dashboard work can start before the hardware arrives.
+- `ros2 bag record` one good walk **and** save it as a session in Tiger Cloud. Either one can be replayed so dashboard dev can continue without hardware, and either is the fallback demo if the live run hiccups.
 
 ---
 
 ## 5. Architecture
 
-```
-┌──────────────────────────── Wearer (hard hat + body rig) ────────────────────────────┐
-│                                                                                       │
-│  RPLIDAR C1 ──USB──▶ rplidar_ros ──/scan──▶ slam_toolbox ──/map, tf──┐               │
-│                                                                      ▼               │
-│  VOC sensor ──I2C──▶ gas_node ──/voc──────────────────────▶ fusion_node ──/gas_points │
-│                                                                      │               │
-│  (IMU ──I2C──▶ imu_node ──/imu──▶ slam_toolbox)                       ▼               │
-│                                                               rosbridge (ws:9090)    │
-└───────────────────────────────────────────────┬──────────────────────────────────────┘
-                                                │ WiFi (phone hotspot)
-                                                ▼
-┌──────────────────────────────── Laptop ──────────────────────────────────────────────┐
-│  Backend (FastAPI) ──▶ GP gas-field estimation ──▶ danger flags                      │
-│         │                                                                             │
-│         ▼                                                                             │
-│  Dashboard: map + gas heatmap + uncertainty + path + alerts                           │
-└───────────────────────────────────────────────────────────────────────────────────────┘
+Full design (components, message formats, REST API, data model, failure modes, build order): **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
+```mermaid
+flowchart TB
+    subgraph wearer["Wearer: hard hat + body rig (Pi 5, ROS 2 Jazzy)"]
+        lidar["RPLIDAR C1"] -- USB --> rplidar["rplidar_ros"]
+        rplidar -- "/scan" --> slam["slam_toolbox"]
+        voc["VOC sensor"] -- I2C --> gas["gas_node"]
+        gas -- "/voc" --> fusion["fusion_node"]
+        slam -- "/map, tf" --> fusion
+        imu["IMU (optional)"] -. I2C .-> imunode["imu_node"]
+        imunode -. "/imu" .-> slam
+        slam -- "/map" --> bridge["rosbridge<br/>ws:9090"]
+        fusion -- "/gas_points<br/>/wearer_pose" --> bridge
+    end
+
+    subgraph laptop["Laptop"]
+        subgraph backend["Backend (FastAPI)"]
+            ingest["ingest"] --> state["live state"]
+            state --> est["GP gas-field<br/>estimation"]
+            est --> flags["danger flags"]
+            ingest --> writer["db writer<br/>(buffers when offline)"]
+            hub["/ws/live"]
+        end
+        dash["Dashboard<br/>map + gas heatmap + uncertainty<br/>+ path + alerts + replay"]
+    end
+
+    tiger[("Tiger Cloud<br/>Postgres + TimescaleDB")]
+
+    bridge -- "WiFi (phone hotspot)" --> ingest
+    state --> hub
+    flags --> hub
+    hub --> dash
+    writer -- "Postgres over TLS<br/>(internet via hotspot)" --> tiger
+    tiger -. "replay / history" .-> hub
 ```
 
-**Interface contract** (agree on this first):
+Solid arrows are the live path, which never waits on the database. Dashed arrows are optional or after-the-fact paths. Tiger Cloud tables: `sessions`, `gas_samples` and `poses` (hypertables), `map_snapshots`, `field_estimates`, `alerts`, and the `gas_cells_10s` continuous aggregate.
+
+**Interface contract** (agree on this first). This is unchanged: the Pi doesn't know about the database.
 
 ```json
 { "t": 1729100000.123, "x": 3.21, "y": -1.04, "voc": 412.0 }
 ```
 
-plus periodic `/map` occupancy grid updates (width, height, resolution, origin, int8 data).
+plus periodic `/map` occupancy grid updates (width, height, resolution, origin, int8 data) and `/wearer_pose` (~5 Hz, `map` frame). The backend adds `session_id` and `wearer_id` before storing anything.
+
+**Data rules.** Coordinates are metres in each session's SLAM `map` frame, not lat/lon. The VOC unit depends on the sensor (SGP40 index / SGP30 ppb / BME68x Ω), so each session records `voc_unit` and `voc_threshold`.
 
 ---
 
@@ -150,8 +178,8 @@ plus periodic `/map` occupancy grid updates (width, height, resolution, origin, 
 | Person | Owns |
 |---|---|
 | Tyler | Pi bring-up, ROS 2, LiDAR + sensor drivers, SLAM, fusion node, launch file |
-| Justin | 3D printed mounts + physical rig, then backend + gas field estimation |
-| Richard | Dashboard frontend, rosbridge integration, Foxglove debugging |
+| Justin | 3D printed mounts + physical rig, then backend + gas field estimation + Tiger Cloud schema / db writer |
+| Richard | Dashboard frontend, rosbridge integration, Foxglove debugging, replay/history views (Tiger Cloud queries) |
 
 (Adjust as needed — the only hard boundary is the JSON interface above.)
 
@@ -164,7 +192,8 @@ plus periodic `/map` occupancy grid updates (width, height, resolution, origin, 
 3. Wearer walks the room; map fills in live, path traces behind them.
 4. Wave an open bottle of isopropyl near the sensor → VOC spikes → red hotspot appears on the map at that location → alert fires.
 5. Walk away; show the field estimate and uncertainty shading persisting.
-6. Backup: replay a recorded `ros2 bag` if live hardware misbehaves.
+6. End the session and scrub the timeline: replay the walk from Tiger Cloud and show the hotspot appear and fade over time (plume tracking).
+7. Backup: replay a recorded `ros2 bag` or a stored Tiger Cloud rehearsal session if live hardware misbehaves.
 
 ---
 
@@ -176,8 +205,11 @@ plus periodic `/map` occupancy grid updates (width, height, resolution, origin, 
 | Venue WiFi blocks P2P | Phone hotspot, not venue WiFi |
 | SLAM drift from head movement | Keep mount level; add IMU if available; shoulder mount as fallback |
 | ROS 2 install pain on Mac | rosbridge → websocket, no ROS on laptops |
-| Live demo fails | Pre-recorded bag replay |
+| Live demo fails | Pre-recorded bag replay, or replay a rehearsal session from Tiger Cloud |
 | Sensor heat drift | Mount sensor away from the Pi, in open air |
+| Hotspot has no internet → Tiger Cloud unreachable | Live path doesn't depend on the DB. The db writer buffers and flushes when the connection returns. For a long outage, point `DATABASE_URL` at local Docker TimescaleDB (same schema). |
+| DB credentials leak | Kept only in `backend/.env` (gitignored). Never on the Pi or in the frontend. |
+| Free-plan storage (750 MiB) | Plenty for a few MB per walk. Delete old rehearsal sessions if needed (cascades). |
 
 ---
 
