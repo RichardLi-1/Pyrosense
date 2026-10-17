@@ -19,7 +19,8 @@ from mcap_ros2._dynamic import generate_dynamic
 
 log = logging.getLogger("foxglove")
 
-SUBPROTOCOL = "foxglove.websocket.v1"
+# ws-protocol v1 (older C++ bridge, Python servers) and the Rust SDK bridge shipped with Jazzy
+SUBPROTOCOLS = ["foxglove.sdk.v1", "foxglove.websocket.v1"]
 OP_MESSAGE_DATA = 1
 _MSG_HEADER = struct.Struct("<BIQ")  # opcode, subscription id, receive time (ns)
 
@@ -69,11 +70,11 @@ class FoxgloveClient:
             backoff = min(self.max_backoff, backoff * 2)
 
     async def _session(self) -> None:
-        async with websockets.connect(self.url, subprotocols=[SUBPROTOCOL], max_size=None,
+        async with websockets.connect(self.url, subprotocols=SUBPROTOCOLS, max_size=None,
                                       ping_interval=20, ping_timeout=20) as ws:
             self.connected = True
             self._subs.clear()
-            log.info("connected to %s", self.url)
+            log.info("connected to %s (%s)", self.url, ws.subprotocol)
             async for raw in ws:
                 if isinstance(raw, (bytes, bytearray)):
                     await self._on_binary(raw)
