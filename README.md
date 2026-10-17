@@ -91,10 +91,11 @@ Alternative mount considered: shoulder mount (more stable, less cool). Helmet ch
 | OS | Ubuntu 24.04 Server 64-bit | ROS 2 Jazzy has official binaries. Set WiFi + SSH in Raspberry Pi Imager at flash time. |
 | Middleware | ROS 2 Jazzy | Pub/sub between all nodes. |
 | LiDAR driver | `ros-jazzy-rplidar-ros` | Publishes `/scan`. |
-| SLAM | `ros-jazzy-slam-toolbox` | Works without odometry. Publishes `/map` and pose via `tf2`. (Hector SLAM is the alternative.) |
+| Laser odometry | `rf2o_laser_odometry` (build from source in `pi/src`) | Estimates motion from consecutive scans and publishes `odom → base_link` on `/tf`. Needed because a person has no wheel odometry, and `slam_toolbox` expects an odom frame. |
+| SLAM | `ros-jazzy-slam-toolbox` | Uses `/scan` + rf2o's odom. Publishes `/map` and the `map → odom` drift correction via `tf2`. (Hector SLAM is the alternative, and needs no odom.) |
 | Gas sensor node | Custom Python (`rclpy`) + Adafruit CircuitPython lib for the sensor | Publishes `/voc`. |
-| Fusion node | Custom Python (`rclpy`) | Subscribes to pose + `/voc`, publishes `/gas_points` as `{x, y, voc, t}`. ~50 lines. |
-| IMU node (optional) | `ros-jazzy-imu-tools` or custom | Feeds odometry to SLAM. |
+| Fusion node | Custom Python (`rclpy`) | Subscribes to pose + `/voc`, publishes `/voc_points` (PointCloud2: `x, y, z, voc`) and `/wearer_pose`. ~50 lines. |
+| IMU node (optional) | `ros-jazzy-imu-tools` or custom | Improves odometry, e.g. fused with rf2o via `robot_localization`. |
 | Bridge | `ros-jazzy-rosbridge-suite` | Websocket JSON out to the laptop. Avoids installing ROS 2 on macOS. |
 | Launch | One launch file that brings everything up | Write this early. One command on demo day. |
 
@@ -129,13 +130,15 @@ flowchart TB
     subgraph wearer["Wearer: hard hat + body rig (Pi 5, ROS 2 Jazzy)"]
         lidar["RPLIDAR C1"] -- USB --> rplidar["rplidar_ros"]
         rplidar -- "/scan" --> slam["slam_toolbox"]
+        rplidar -- "/scan" --> rf2o["rf2o<br/>(laser odometry)"]
+        rf2o -- "tf: odom → base_link" --> slam
         voc["VOC sensor"] -- I2C --> gas["gas_node"]
         gas -- "/voc" --> fusion["fusion_node"]
         slam -- "/map, tf" --> fusion
         imu["IMU (optional)"] -. I2C .-> imunode["imu_node"]
-        imunode -. "/imu" .-> slam
+        imunode -. "/imu" .-> rf2o
         slam -- "/map" --> bridge["rosbridge<br/>ws:9090"]
-        fusion -- "/gas_points<br/>/wearer_pose" --> bridge
+        fusion -- "/voc_points<br/>/wearer_pose" --> bridge
     end
 
     subgraph laptop["Laptop"]
@@ -161,11 +164,18 @@ flowchart TB
 
 Solid arrows are the live path, which never waits on the database. Dashed arrows are optional or after-the-fact paths. Tiger Cloud tables: `sessions`, `gas_samples` and `poses` (hypertables), `map_snapshots`, `field_estimates`, `alerts`, and the `gas_cells_10s` continuous aggregate.
 
-**Interface contract** (agree on this first). This is unchanged: the Pi doesn't know about the database.
+**Interface contract** (agree on this first). The Pi doesn't know about the database.
 
-```json
-{ "t": 1729100000.123, "x": 3.21, "y": -1.04, "voc": 412.0 }
+`/voc_points` (`sensor_msgs/PointCloud2`, `map` frame), fields `x, y, z, voc` (float32, 16 bytes per point):
+
+```yaml
+header: {stamp: {sec: 1729100000, nanosec: 123000000}, frame_id: map}
+width: 1842                      # points in this message
+fields: [x, y, z, voc]           # float32 each
+data: <width × 16 bytes>         # rosbridge sends this as base64
 ```
+
+Each point is one gas reading, e.g. `x=3.21, y=-1.04, voc=412.0`. The message may hold only the newest reading or every reading so far. The backend handles both by only processing points it hasn't seen yet. Formats for every topic: [docs/ros-messages.md](docs/ros-messages.md).
 
 plus periodic `/map` occupancy grid updates (width, height, resolution, origin, int8 data) and `/wearer_pose` (~5 Hz, `map` frame). The backend adds `session_id` and `wearer_id` before storing anything.
 

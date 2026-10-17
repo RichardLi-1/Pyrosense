@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     notes       text
 );
 
--- Raw fused readings: one row per /gas_points message.
+-- Raw fused readings: one row per new point on /voc_points.
 CREATE TABLE IF NOT EXISTS gas_samples (
     time        timestamptz NOT NULL,
     session_id  uuid NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,

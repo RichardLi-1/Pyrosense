@@ -19,10 +19,12 @@ How data moves from the sensors on the helmet to the dashboard and into Tiger Cl
 flowchart TB
     subgraph pi["Pi 5 (wearer), ROS 2 Jazzy"]
         rplidar["rplidar_ros"] -- "/scan" --> slam["slam_toolbox"]
+        rplidar -- "/scan" --> rf2o["rf2o<br/>(laser odometry)"]
+        rf2o -- "tf: odom → base_link" --> slam
         gasnode["gas_node"] -- "/voc" --> fusion["fusion_node"]
         slam -- "/map, tf" --> fusion
         slam -- "/map" --> bridge["rosbridge_server<br/>ws:9090"]
-        fusion -- "/gas_points<br/>/wearer_pose" --> bridge
+        fusion -- "/voc_points<br/>/wearer_pose" --> bridge
     end
 
     bag["ros2 bag play<br/>(same topics)"] -.-> bridge
@@ -67,13 +69,13 @@ Three data paths:
 
 ### 3.1 Pi (`pi/`, ROS 2 Jazzy). Owner: Tyler
 
-Same as the README, with one addition:
+Same as the README, with one addition. Message formats for every topic are in [ros-messages.md](ros-messages.md).
 
 - **`fusion_node`** also publishes **`/wearer_pose`** (`geometry_msgs/PoseStamped`, `map` frame, ~5 Hz) by looking up the `map → base_link` transform. Without it the backend would have to subscribe to `/tf` through rosbridge, which is noisy and awkward. With it, the dashboard can draw the path faster than the gas sample rate.
 
 | Topic | Type | Rate | Consumer |
 |---|---|---|---|
-| `/gas_points` | `std_msgs/String` (JSON, see contract) | ~1 Hz (sensor rate) | backend |
+| `/voc_points` | `sensor_msgs/PointCloud2` (`x, y, z, voc`, see contract) | ~1 Hz (sensor rate) | backend, RViz/Foxglove |
 | `/wearer_pose` | `geometry_msgs/PoseStamped` | ~5 Hz | backend |
 | `/map` | `nav_msgs/OccupancyGrid` | slam_toolbox default (a few s) | backend |
 
@@ -123,15 +125,18 @@ Controls: start/stop session, live/replay toggle, and a timeline scrubber for re
 
 ## 4. Interfaces
 
-### 4.1 Pi → backend (the hard boundary, unchanged)
+### 4.1 Pi → backend (the hard boundary)
 
-`/gas_points` payload:
+`/voc_points`: `sensor_msgs/PointCloud2` in the `map` frame. Each point is `x, y, z, voc` as float32 (16 bytes). Full layout: [ros-messages.md](ros-messages.md#voc_points-sensor_msgspointcloud2-the-contract).
 
-```json
-{ "t": 1729100000.123, "x": 3.21, "y": -1.04, "voc": 412.0 }
-```
+How `ingest` reads it:
+- rosbridge sends `data` as a base64 string. Decode it with numpy (`np.frombuffer(b64decode(data), dtype="<f4").reshape(-1, 4)`). There's no ROS on the laptop, so `sensor_msgs_py` isn't available.
+- **New points only:** remember how many points were already processed. If `width` grew, handle only the points past that count. If `width` shrank, the Pi restarted, so reset the count. This works whether each message carries just the newest reading or everything so far.
+- **Time:** new points get the message's `header.stamp` (Pi clock, NTP-synced over the hotspot).
 
-`t` is Unix seconds (Pi clock, NTP-synced over the hotspot). `x`, `y` are metres in the `map` frame. The backend adds `session_id` and `wearer_id`, so the Pi doesn't need to know about sessions.
+`x`, `y` are metres in the `map` frame. The backend adds `session_id` and `wearer_id`, so the Pi doesn't need to know about sessions.
+
+If the cloud re-sends every point, messages grow over the walk (~16 bytes per reading, so ~10 KB after 10 minutes at 1 Hz, before base64). That's fine for a demo. If it ever gets heavy, have the Pi publish only new points. The backend needs no change.
 
 ### 4.2 Backend → dashboard: `/ws/live`
 
@@ -244,7 +249,7 @@ bags/                     recorded ros2 bags (gitignored, or Git LFS)
 
 ## 9. Build order
 
-1. **Contract first**: agree on the `/gas_points` JSON and the `/ws/live` message types (§4). Commit a fake publisher (`backend/tools/fake_pi.py`) that emits a random walk plus a VOC blob, so the backend and dashboard can be built before the hardware arrives.
+1. **Contract first**: agree on the `/voc_points` layout and the `/ws/live` message types (§4). Commit a fake publisher (`backend/tools/fake_pi.py`) that emits a random walk plus a VOC blob, so the backend and dashboard can be built before the hardware arrives.
 2. **Tiger Cloud**: create the service, apply `db/schema.sql`, and put the connection string in `.env`.
 3. **Thin vertical slice**: fake Pi → ingest → `/ws/live` → dashboard dots on a blank canvas, plus rows appearing in `gas_samples`.
 4. **Real Pi**: swap the fake publisher for rosbridge. Add the map layer and the path.
