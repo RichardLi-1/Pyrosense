@@ -91,7 +91,7 @@ One process with five modules. They communicate through in-process `asyncio.Queu
 | `state` | In-memory source of truth for the current session: latest map, current pose, last ~N gas points, latest field estimate, active alerts. |
 | `estimator` | Every 1–2 s, fits the gas field on the current map grid and outputs mean + std (see §6). Runs in a thread pool so it never blocks the event loop. |
 | `alerts` | Two triggers: (a) a raw sample is over `voc_threshold`, sent at once; (b) a field cell has `P(voc > threshold) > 0.5`, sent after each estimate. Debounced per cell. |
-| `dbwriter` | Bounded queue (e.g. 50k rows). Flushes every 500 ms or 200 rows with `asyncpg` `copy_records_to_table` / `executemany`. On error: exponential backoff and keep buffering. If the queue fills, drop the oldest rows first and log a counter. Never blocks `ingest`. |
+| `db_writer` | Bounded queue (e.g. 50k rows). Flushes every 500 ms or 200 rows with `asyncpg` `copy_records_to_table` / `executemany`. On error: exponential backoff and keep buffering. If the queue fills, drop the oldest rows first and log a counter. Never blocks `ingest`. |
 | `api` | `/ws/live` websocket hub plus the REST routes below. Serves the built dashboard as static files. |
 
 Config comes from `backend/.env` (gitignored):
@@ -219,7 +219,7 @@ Owner: Justin
 
 | Failure | What happens | Mitigation |
 |---|---|---|
-| Hotspot has no internet | Live demo unaffected. `dbwriter` buffers and logs "DB offline (N queued)". | Rows flush once the connection returns. For a long outage, point `DATABASE_URL` at local Docker TimescaleDB, which uses the same schema. |
+| Hotspot has no internet | Live demo unaffected. `db_writer` buffers and logs "DB offline (N queued)". | Rows flush once the connection returns. For a long outage, point `DATABASE_URL` at local Docker TimescaleDB, which uses the same schema. |
 | Pi ↔ laptop link drops | Dashboard shows "wearer disconnected" plus the last known pose. | `ingest` reconnects with backoff. Data is lost for the gap (acceptable). |
 | Estimator too slow | Field updates lag. | Lower the point cap, increase the interval, or switch to the per-cell fallback. |
 | Tiger Cloud credentials leak | — | Credentials live only in `backend/.env` (gitignored), never on the Pi and never in the frontend bundle. |
@@ -234,7 +234,7 @@ Owner: Justin
 pi/                       ROS 2 workspace (colcon)
   src/hazard_nodes/       gas_node, fusion_node, launch/bringup.launch.py
 backend/
-  app/{ingest,state,estimator,alerts,dbwriter,api}.py
+  app/{ingest,state,estimator,alerts,db_writer,api}.py
   .env.example
   pyproject.toml
 dashboard/                React + Vite
