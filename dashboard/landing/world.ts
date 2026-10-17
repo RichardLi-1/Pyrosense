@@ -41,8 +41,9 @@ export class World {
   readonly scene = new THREE.Scene()
   readonly camera = new THREE.PerspectiveCamera(58, 1, 0.05, 220)
   impulse = 0
-  private endLook = new THREE.Vector3(14, -2.2, -20)
-  private endDist = 14.4
+  /** Final shot: where the house should land on screen (NDC) and the camera z. */
+  private endAim = new THREE.Vector2(-0.5, 0.5)
+  private endCamZ = 16
   private impulseAge = 0
   private fires: Fire[] = []
   private lamps: Lamp[] = []
@@ -207,10 +208,15 @@ export class World {
 
   setRtHeight(h: number) { this.emberScale.value = h * 0.07 }
 
-  /** Frame the final exterior shot: where it looks (x, y at the house) and how far back it stands. */
-  setEndFraming(lookX: number, lookY: number, dist: number) {
-    this.endLook.set(lookX, lookY, -20)
-    this.endDist = dist
+  /**
+   * Frame the final exterior shot so the house lands at screen point (nx, ny) in NDC
+   * (-1..1, y up) and is about `housePx` tall on a viewport `viewH` CSS px tall.
+   */
+  setEndFraming(nx: number, ny: number, housePx: number, viewH: number) {
+    this.endAim.set(nx, ny)
+    const fov = (this.camera.fov * Math.PI) / 180
+    const dist = (9 * viewH) / (Math.max(40, housePx) * 2 * Math.tan(fov / 2))
+    this.endCamZ = -20 + dist
   }
 
   /** A short, stronger, damped shake (the warning). */
@@ -227,9 +233,12 @@ export class World {
 
     if (exterior) {
       const push = span(p, T.cut, T.cut + 0.1)
-      cam.position.set(-0.6, 1.5, this.endDist + lerp(0.8, 0, push))
+      cam.position.set(-0.6, 1.5, this.endCamZ + lerp(0.8, 0, push))
       cam.position.x += Math.sin(t * 0.3) * 0.03
-      cam.lookAt(this.endLook)
+      cam.lookAt(0, 4.2, -20)
+      const half = Math.tan((cam.fov * Math.PI) / 360)
+      cam.rotateY(Math.atan(this.endAim.x * half * cam.aspect))
+      cam.rotateX(-Math.atan(this.endAim.y * half))
     } else {
       catmull(PATH, p, 'pos', this.tmpPos)
       catmull(PATH, p, 'look', this.tmpLook)

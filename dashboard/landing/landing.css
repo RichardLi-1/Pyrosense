@@ -123,6 +123,8 @@ html.forced .scroll-space { height: 100vh; }
 .dash-times { display: flex; justify-content: space-between; font-size: calc(var(--u) * 1.15); color: var(--muted); }
 
 .cta { position: absolute; left: var(--gutter); top: 58%; transform: translateY(-50%); max-width: min(40vw, 520px); pointer-events: auto; }
+.cta.stacked { top: clamp(40px, 7vh, 80px); transform: none; max-width: min(520px, calc(100vw - 2 * var(--gutter))); }
+.cta.stacked h2 { font-size: clamp(30px, 4.6vw, 52px); }
 .cta h2 { font-size: clamp(34px, 4.4vw, 68px); font-weight: 500; letter-spacing: -0.04em; line-height: 1; }
 .cta p { margin-top: 20px; font-size: clamp(15px, 1.2vw, 18px); color: var(--muted); line-height: 1.5; max-width: 40ch; }
 .cta-row { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
@@ -145,8 +147,7 @@ html.forced .scroll-space { height: 100vh; }
   .hint[data-side="r"] { right: auto; left: var(--gutter); text-align: left; align-items: flex-start; }
   .problem { padding-bottom: 56px; }
   .intro { padding-bottom: 44vh; }
-  .cta { max-width: calc(100vw - 2 * var(--gutter)); top: 56px; transform: none; }
-  .cta h2 { font-size: 30px; }
+  .cta.stacked h2 { font-size: 30px; }
   .cta p { margin-top: 12px; font-size: 14px; }
   .cta-row { margin-top: 18px; }
   .btn { height: 42px; padding: 0 16px; font-size: 14px; }

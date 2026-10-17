@@ -56,6 +56,9 @@ function txt(e: HTMLElement, s: string) {
 // ---- layout -----------------------------------------------------------------
 let W = 1, H = 1, dpr = 1, cell = 8, gw = 1, gh = 1, gutter = 20, mobile = false
 let laptopRect = { x: 0, y: 0, w: 1, h: 1 }
+let stacked = false
+let ctaRect = new DOMRect()
+let footRect = new DOMRect()
 let calloutRects: DOMRect[] = []
 let hintRects: DOMRect[] = []
 let problemRect = new DOMRect()
@@ -86,20 +89,52 @@ function resize() {
   post.uniforms.uGrid.value.set(gw, gh)
   post.uniforms.uCell.value = cell * dpr
   gutter = clamp(0.06 * W, 20, 96)
-  if (mobile) {
-    const w = W - 2 * gutter
-    laptopRect = { x: gutter, y: H * 0.46, w, h: w * 0.64 }
+  // ---- end scene: measured layout that works from 390 to 1920 wide
+  stacked = W < 1100
+  el.cta.classList.toggle('stacked', stacked)
+  el.cta.style.transform = ''
+  styleCache.delete(el.cta)
+  ctaRect = el.cta.getBoundingClientRect()
+  footRect = el.foot.getBoundingClientRect()
+  const ratio = 0.625            // laptop screen aspect
+  const baseExtra = 0.075        // base + table line below the screen, as a fraction of width
+  let houseX: number, houseY: number, housePx: number
+  if (stacked) {
+    // text on top, a strip for the small house, laptop below at the width that still fits
+    const zone = clamp(H * 0.2, 90, 170)
+    const y = ctaRect.bottom + 20 + zone
+    const maxH = H - y - 72
+    const w = clamp(Math.min(W - 2 * gutter, maxH / (ratio + baseExtra)), 200, 760)
+    laptopRect = { x: (W - w) / 2, y, w, h: w * ratio }
+    houseX = W / 2
+    houseY = ctaRect.bottom + 20 + zone / 2
+    housePx = zone * 0.82
   } else {
-    const w = Math.min(W * 0.52, 780)
-    laptopRect = { x: W - gutter - w, y: (H - w * 0.625) / 2 + H * 0.02, w, h: w * 0.625 }
+    // text column left, laptop fills the space to its right, house small above the text
+    const textRight = ctaRect.right + 48
+    const availW = W - gutter - textRight
+    const availH = H - 112
+    const w = clamp(Math.min(availW, availH / (ratio + baseExtra), 820), 240, 820)
+    laptopRect = { x: W - gutter - w, y: (H - w * ratio) / 2 + H * 0.02, w, h: w * ratio }
+    const above = ctaRect.top - 40
+    if (above > 150) {
+      houseX = ctaRect.left + Math.min(ctaRect.width, 320) / 2
+      houseY = above / 2 + 16
+      housePx = clamp(above * 0.7, 90, 220)
+    } else {
+      // not enough room above the text: put it above the laptop instead
+      houseX = laptopRect.x + laptopRect.w / 2
+      houseY = laptopRect.y / 2
+      housePx = clamp(laptopRect.y * 0.7, 70, 200)
+    }
   }
+  world.setEndFraming((houseX / W) * 2 - 1, 1 - (houseY / H) * 2, housePx, H)
   mock.layout(laptopRect.x, laptopRect.y, laptopRect.w, laptopRect.h, dpr)
   calloutRects = el.callouts.map((c) => c.getBoundingClientRect())
   hintRects = el.hints.map((h) => h.getBoundingClientRect())
   const ph = el.problemH.getBoundingClientRect(), ps = el.problemS.getBoundingClientRect()
   problemRect = new DOMRect(Math.min(ph.left, ps.left), ph.top, Math.max(ph.width, ps.width), ps.bottom - ph.top)
   warnRect = el.warn.children[1].getBoundingClientRect()
-  world.setEndFraming(mobile ? 2 : 14, mobile ? -2.8 : -3.6, mobile ? 15.5 : 14.4)
 }
 
 // ---- scroll -----------------------------------------------------------------
@@ -226,6 +261,7 @@ function render(p: number, t: number, dt: number) {
   }
   if (warnW > 0.01) { shadeK = warnW * 0.7; shadeFrom(u.uShade1.value, warnRect, 40) }
   if (lungsW > 0.01) { shadeK = Math.max(shadeK, lungsW); shadeFrom(u.uShade1.value, problemRect) }
+  if (exterior) { shadeK = 1; shadeFrom(u.uShade1.value, ctaRect, 28); shadeFrom(u.uShade2.value, footRect, 16) }
   u.uShadeK.value = shadeK
   hud.warnRing(warnW, t, reducedMotion)
   const lungsA = win(p, T.lungs[0], T.lungs[1], 0.02, 0.02)
@@ -276,7 +312,7 @@ function render(p: number, t: number, dt: number) {
   fx(el.laptop, la, `scale(${lerp(0.985, 1, la).toFixed(4)})`)
   const ca = span(p, T.cta[0], T.cta[1])
   const rise = ((1 - ca) * 24).toFixed(1)
-  fx(el.cta, ca, mobile ? `translateY(${rise}px)` : `translateY(calc(-50% + ${rise}px))`)
+  fx(el.cta, ca, stacked ? `translateY(${rise}px)` : `translateY(calc(-50% + ${rise}px))`)
   fx(el.foot, ca)
   if (la > 0) mock.update(t, reducedMotion)
   prevP = p
@@ -316,3 +352,4 @@ addEventListener('pagehide', () => {
 })
 resize()
 start()
+document.fonts?.ready.then(resize)
