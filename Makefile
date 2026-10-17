@@ -54,8 +54,8 @@ dashboard: ## Dashboard dev server
 dev: ## Everything, no hardware: db + fake Pi + API + dashboard (Ctrl-C stops all)
 	@scripts/dev.sh
 
-test: ## Backend tests (no db or bridge needed)
-	cd backend && $(PY) -m pytest -q
+test: ## Backend tests; DB tests run if the local db is up (make db), else skip
+	cd backend && TEST_DATABASE_URL=$(LOCAL_DB) $(PY) -m pytest -q -rs -p no:warnings
 
 smoke: ## Hit every REST route on a running API
 	@scripts/smoke.sh

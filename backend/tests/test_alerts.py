@@ -28,3 +28,18 @@ def test_exact_threshold_is_not_alert():
     e = AlertEngine(250, 0, 0)
     assert e.update(250, 0) is False
     assert e.update(250.1, 0) is True
+
+
+def test_reset_clears_hold_and_cooldown():
+    e = AlertEngine(250, 5, 60)
+    e.update(300, 0); assert e.update(300, 5) is True
+    e.reset()
+    assert e.armed_since is None
+    assert e.update(300, 6) is False and e.update(300, 11) is True   # fresh hold, no cooldown
+
+
+def test_cooldown_needs_fresh_hold_after_dip():
+    e = AlertEngine(250, 5, 60)
+    e.update(300, 0); e.update(300, 5)
+    e.update(100, 70)                       # dip after cooldown
+    assert e.update(300, 71) is False and e.update(300, 76) is True

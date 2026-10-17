@@ -113,11 +113,12 @@ class Summarizer:
         text, source = None, "fallback"
         if self._client is not None:
             try:
-                text = await asyncio.wait_for(self._call(stats, top, png), timeout=30)
-                source = "gemini"
+                text = (await asyncio.wait_for(self._call(stats, top, png), timeout=30)).strip()
             except Exception as e:  # noqa: BLE001
                 log.warning("gemini failed, using fallback: %s", e)
-        if not text:
+        if text:
+            source = "gemini"
+        else:
             text = fallback_text(stats, top)
         result = {"text": text.strip(), "source": source, "model": self.model if source == "gemini" else None,
                   "generated_at": datetime.now(timezone.utc).isoformat(), "top_cells": top, "stats": stats}

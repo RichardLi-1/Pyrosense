@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from .alerts import AlertEngine
 from .config import TOPIC_MAP, TOPIC_POSE, TOPIC_VOC_POINTS, Settings
 from .db import Database
-from .ros import map_from_msg, map_to_png, points_from_pointcloud, pose_from_msg
+from .ros import map_from_msg, map_to_png, point_times, points_from_pointcloud, pose_from_msg, stamp_to_datetime
 from .state import Broadcaster, LiveState
 
 log = logging.getLogger("ingest")
@@ -54,13 +54,20 @@ class Ingest:
 
     async def _on_points(self, msg) -> None:
         pts = points_from_pointcloud(msg)
-        new = self.state.tracker.new_points(pts)
-        if len(new) == 0:
+        t = point_times(msg)
+        idx = self.state.tracker.new_index(pts, t)
+        if len(idx) == 0:
             return
-        ts = datetime.fromtimestamp(msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9, tz=timezone.utc)
+        new = pts[idx]
+        if t is not None:
+            stamps = [datetime.fromtimestamp(s, tz=timezone.utc) for s in t[idx].tolist()]
+        else:
+            stamps = [stamp_to_datetime(msg.header.stamp)] * len(new)
+        ts = stamps[-1]
         heading = self.state.pose.heading if self.state.pose else None
         session = self.state.session
-        rows = [(ts, session, float(x), float(y), heading, float(v)) for x, y, _z, v in new.tolist()]
+        rows = [(st, session, float(x), float(y), heading, float(v))
+                for st, (x, y, _z, v) in zip(stamps, new.tolist())]
         self.db.add_readings(rows)
         self.state.n_samples += len(rows)
         latest = float(new[-1, 3])

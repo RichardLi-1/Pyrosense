@@ -32,42 +32,62 @@ class MapState:
         }
 
 
+def _key(row: np.ndarray) -> tuple:
+    return tuple(np.round(row, 4).tolist())
+
+
 class PointTracker:
-    """De-duplicates /voc_points, which voc_mapper publishes as the full list each time."""
+    """Picks the not-yet-seen points out of each /voc_points message.
+
+    With a per-point `t` field a point is new iff its t is later than any seen so far,
+    whatever the publisher sends (full list, ring buffer or one point at a time).
+    Without `t` we guess from length and content, which cannot tell a re-publish from
+    a new identical reading (standing still, same integer VOC index): those are dropped.
+    """
+
+    SEEN_MAX = 120_000
 
     def __init__(self) -> None:
         self.processed = 0
+        self.last_t: float | None = None
         self._last: tuple | None = None
-        self._seen: set[tuple] = set()
+        self._seen: dict[tuple, None] = {}  # insertion-ordered, so trimming keeps the newest
 
     def reset(self) -> None:
         self.processed = 0
+        self.last_t = None
         self._last = None
         self._seen.clear()
 
-    def new_points(self, pts: np.ndarray) -> np.ndarray:
+    def new_index(self, pts: np.ndarray, t: np.ndarray | None = None) -> np.ndarray:
+        """Indices into pts of the points not seen before."""
         n = len(pts)
         if n == 0:
-            return pts
+            return np.zeros(0, dtype=np.intp)
+        if t is not None:
+            idx = np.arange(n) if self.last_t is None else np.flatnonzero(t > self.last_t)
+            if len(idx):
+                self.last_t = float(t[idx].max())
+            return idx
         if n < self.processed:  # mapper restarted / reset
             self.reset()
         if n > self.processed:
-            new = pts[self.processed:]
+            idx = np.arange(self.processed, n)
         else:
-            last = tuple(np.round(pts[-1], 4).tolist())
-            if last == self._last:
-                return pts[:0]
+            if _key(pts[-1]) == self._last:
+                return np.zeros(0, dtype=np.intp)
             # same length, new content: ring buffer at capacity -> set difference
-            keys = [tuple(k) for k in np.round(pts, 4).tolist()]
-            mask = np.fromiter((k not in self._seen for k in keys), dtype=bool, count=n)
-            new = pts[mask]
+            idx = np.flatnonzero([_key(p) not in self._seen for p in pts])
         self.processed = n
-        self._last = tuple(np.round(pts[-1], 4).tolist())
-        for k in np.round(new, 4).tolist():
-            self._seen.add(tuple(k))
-        if len(self._seen) > 120_000:
-            self._seen = set(list(self._seen)[-60_000:])
-        return new
+        self._last = _key(pts[-1])
+        for i in idx:
+            self._seen[_key(pts[i])] = None
+        if len(self._seen) > self.SEEN_MAX:
+            self._seen = dict.fromkeys(list(self._seen)[-self.SEEN_MAX // 2:])
+        return idx
+
+    def new_points(self, pts: np.ndarray, t: np.ndarray | None = None) -> np.ndarray:
+        return pts[self.new_index(pts, t)]
 
 
 @dataclass
@@ -93,7 +113,8 @@ class LiveState:
         self.voc_ts = None
         self.voc_window.clear()
         self.n_samples = 0
-        self.tracker.reset()
+        # Keep the tracker: the Pi's list still holds the old session's points, and
+        # only readings published after the switch belong to the new session.
 
     def set_map(self, grid: MapGrid, png: bytes) -> MapState:
         self._map_version += 1

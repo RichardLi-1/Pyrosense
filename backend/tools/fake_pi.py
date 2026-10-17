@@ -48,16 +48,27 @@ def encode_map(grid: np.ndarray) -> bytes:
     return w.finish()
 
 
-def encode_points(pts: np.ndarray) -> bytes:
+POINT_DTYPE = np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("voc", "<f4")])
+POINT_DTYPE_T = np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("voc", "<f4"), ("t", "<f8")])
+
+
+def encode_points(pts: np.ndarray, times: np.ndarray | None = None) -> bytes:
+    """pts (N, 4) x, y, z, voc; times (N,) unix seconds adds a FLOAT64 `t` field (point_step 24)."""
     sec, nsec = now_stamp()
     n = len(pts)
+    dtype = POINT_DTYPE if times is None else POINT_DTYPE_T
+    rec = np.zeros(n, dtype=dtype)
+    for i, name in enumerate(("x", "y", "z", "voc")):
+        rec[name] = pts[:, i]
+    if times is not None:
+        rec["t"] = times
     w = CdrWriter().header(sec, nsec, "map")
     w.uint32(1).uint32(n)
-    w.uint32(4)
-    for name, off in (("x", 0), ("y", 4), ("z", 8), ("voc", 12)):
-        w.string(name).uint32(off).uint8(7).uint32(1)
-    w.bool(False).uint32(16).uint32(16 * n)
-    w.bytes_seq(pts.astype("<f4").tobytes())
+    w.uint32(len(dtype.names))
+    for name in dtype.names:
+        w.string(name).uint32(dtype.fields[name][1]).uint8(8 if name == "t" else 7).uint32(1)
+    w.bool(False).uint32(dtype.itemsize).uint32(dtype.itemsize * n)
+    w.bytes_seq(rec.tobytes())
     w.bool(True)
     return w.finish()
 
@@ -128,6 +139,7 @@ async def main() -> None:
         print(f"fake_pi: ws://{args.host}:{args.port}  topics={list(ch)}  spike_at={args.spike_at}")
         walker = Walker()
         pts: list[tuple[float, float, float, float]] = []
+        times: list[float] = []
         t0 = time.time(); last_voc = last_map = t0
         dt = 1.0 / args.pose_hz
         while True:
@@ -137,9 +149,11 @@ async def main() -> None:
             if now - last_voc >= 1.0 / args.voc_hz:
                 last_voc = now
                 pts.append((walker.x, walker.y, 0.0, voc_at(walker.x, walker.y, t, args.spike_at)))
+                times.append(now)
                 if len(pts) > args.max_points:
-                    pts = pts[-args.max_points:]
-                await server.send_message(ch["/voc_points"], time.time_ns(), encode_points(np.array(pts, dtype="<f4")))
+                    pts, times = pts[-args.max_points:], times[-args.max_points:]
+                await server.send_message(ch["/voc_points"], time.time_ns(),
+                                          encode_points(np.array(pts, dtype="<f4"), np.array(times)))
             if now - last_map >= args.map_period:
                 last_map = now
                 await server.send_message(ch["/map"], time.time_ns(), encode_map(walker.grid))

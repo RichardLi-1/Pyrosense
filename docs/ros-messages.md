@@ -101,7 +101,7 @@ warmed_up: true        # SGP40/BME68x readings are unreliable until warm-up fini
 
 Gas readings placed on the map, packed as binary. The backend reads it for the heatmap, alerts and storage. RViz/Foxglove can color the points by `voc`. Don't change the field layout without telling the backend and dashboard owners.
 
-A message may carry only the newest reading or every reading so far. The backend only processes points it hasn't seen (see [ARCHITECTURE.md §4.1](ARCHITECTURE.md#41-pi--backend-the-hard-boundary)).
+A message may carry only the newest reading or every reading so far. Each point's `t` (unix seconds) is what lets the backend tell a new reading from a re-sent one: it only processes points with a later `t` than any it has seen. Without `t` it falls back to guessing, which drops repeated identical readings (see [ARCHITECTURE.md §4.1](ARCHITECTURE.md#41-pi--backend-the-hard-boundary)).
 
 ```yaml
 header: {stamp: ..., frame_id: map}
@@ -112,13 +112,14 @@ fields:
   - {name: y,   offset: 4,  datatype: 7, count: 1}
   - {name: z,   offset: 8,  datatype: 7, count: 1}
   - {name: voc, offset: 12, datatype: 7, count: 1}
-point_step: 16                   # bytes per point
-row_step: 29472                  # 1842 × 16
+  - {name: t,   offset: 16, datatype: 8, count: 1}   # 8 = FLOAT64, reading time (unix s)
+point_step: 24                   # bytes per point
+row_step: 44208                  # 1842 × 24
 is_dense: true
-data: <29,472 bytes>
+data: <44,208 bytes>
 ```
 
-Decoded point: x = 4.35, y = −1.04, z = 0.0, voc = 183.0.
+Decoded point: x = 4.35, y = −1.04, z = 0.0, voc = 183.0, t = 1760670000.412.
 
 - On the Pi: read it with `sensor_msgs_py.point_cloud2.read_points()`.
 - On the laptop (no ROS): rosbridge sends `data` as base64. Use `np.frombuffer(b64decode(data), dtype="<f4").reshape(-1, 4)`.

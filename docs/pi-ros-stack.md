@@ -59,12 +59,12 @@ For each `/voc` message:
 1. Skip if `!warmed_up`.
 2. `t_eff = header.stamp − SENSOR_LAG_SECONDS` (param, default 12.0).
 3. `tf_buffer.lookup_transform('map', 'base_link', t_eff, timeout=0.2 s)`. On `ExtrapolationException` / `LookupException`, log once per 5 s and drop the reading.
-4. Append `(x, y, 0, voc_index)` to an in-memory list, capped at 50 000 points (ring buffer).
-5. Every 1 s (or every N new points), publish the whole list as a `PointCloud2` with fields `x, y, z, voc` (FLOAT32 each, point_step 16), `frame_id = map`, `stamp = now`.
+4. Append `(x, y, 0, voc_index, t)` to an in-memory list, capped at 50 000 points (ring buffer). `t` is the `/voc` message's `header.stamp` in unix seconds.
+5. Every 1 s (or every N new points), publish the whole list as a `PointCloud2` with fields `x, y, z, voc` (FLOAT32, offsets 0/4/8/12) and `t` (FLOAT64, offset 16), point_step 24, `frame_id = map`, `stamp = now`.
 
 Also exposes a service `/voc_mapper/reset` (`std_srvs/Trigger`) to clear the buffer at the start of a session.
 
-Rationale for publishing the full list each time rather than deltas: the backend's ingest worker treats each message as authoritative and de-dupes by `(stamp, x, y)` — simpler than reasoning about missed deltas over Wi‑Fi.
+Rationale for publishing the full list each time rather than deltas: the backend's ingest worker treats each message as authoritative and de-dupes by the per-point `t` (a point is new iff its `t` is later than any seen) — simpler than reasoning about missed deltas over Wi‑Fi.
 
 ## Launch file: `wearable_bringup/launch/mapping.launch.py`
 

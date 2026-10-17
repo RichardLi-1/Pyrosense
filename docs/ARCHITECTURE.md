@@ -129,16 +129,16 @@ Controls: start/stop session, live/replay toggle, and a timeline scrubber for re
 
 ### 4.1 Pi → backend (the hard boundary)
 
-`/voc_points`: `sensor_msgs/PointCloud2` in the `map` frame. Each point is `x, y, z, voc` as float32 (16 bytes). Full layout: [ros-messages.md](ros-messages.md#voc_points-sensor_msgspointcloud2-the-contract).
+`/voc_points`: `sensor_msgs/PointCloud2` in the `map` frame. Each point is `x, y, z, voc` as float32 plus `t` (reading time, unix seconds) as float64: 24 bytes. Full layout: [ros-messages.md](ros-messages.md#voc_points-sensor_msgspointcloud2-the-contract).
 
 How `ingest` reads it:
 - rosbridge sends `data` as a base64 string. Decode it with numpy (`np.frombuffer(b64decode(data), dtype="<f4").reshape(-1, 4)`). There's no ROS on the laptop, so `sensor_msgs_py` isn't available.
-- **New points only:** remember how many points were already processed. If `width` grew, handle only the points past that count. If `width` shrank, the Pi restarted, so reset the count. This works whether each message carries just the newest reading or everything so far.
-- **Time:** new points get the message's `header.stamp` (Pi clock, NTP-synced over the hotspot).
+- **New points only:** a point is new iff its `t` is later than the newest `t` already processed. This works whether each message carries just the newest reading, everything so far, or a full ring buffer, and it keeps repeated identical readings (standing still). Switching session keeps this watermark, so the old session's points aren't re-filed under the new one.
+- **Time:** each row gets its point's `t` (Pi clock, NTP-synced over the hotspot). Clouds without `t` fall back to the message's `header.stamp` and a length/content guess.
 
 `x`, `y` are metres in the `map` frame. The backend adds `session_id` and `wearer_id`, so the Pi doesn't need to know about sessions.
 
-If the cloud re-sends every point, messages grow over the walk (~16 bytes per reading, so ~10 KB after 10 minutes at 1 Hz, before base64). That's fine for a demo. If it ever gets heavy, have the Pi publish only new points. The backend needs no change.
+If the cloud re-sends every point, messages grow over the walk (~24 bytes per reading, so ~10 KB after 10 minutes at 1 Hz, before base64). That's fine for a demo. If it ever gets heavy, have the Pi publish only new points. The backend needs no change.
 
 ### 4.2 Backend → dashboard: `/ws/live`
 

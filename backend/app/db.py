@@ -140,13 +140,27 @@ class Database:
     async def _flush(self) -> None:
         if not self._buf or self.pool is None:
             return
+        # Take the batch out before awaiting: rows added during the COPY then can't
+        # evict batch rows from the full deque and get popped unwritten afterwards.
         batch = list(self._buf)
-        async with self.pool.acquire() as conn:
-            await conn.copy_records_to_table(
-                "readings", records=batch, columns=["ts", "session", "x", "y", "heading", "voc"])
-        for _ in range(len(batch)):
-            self._buf.popleft()
+        self._buf.clear()
+        try:
+            async with self.pool.acquire() as conn:
+                await conn.copy_records_to_table(
+                    "readings", records=batch, columns=["ts", "session", "x", "y", "heading", "voc"])
+        except BaseException:
+            self._requeue(batch)
+            raise
         self.rows_written += len(batch)
+
+    def _requeue(self, batch: list[tuple]) -> None:
+        """Put an unwritten batch back in front of newer rows, keeping the newest if over capacity."""
+        rows = batch + list(self._buf)
+        cap = self._buf.maxlen or len(rows)
+        if len(rows) > cap:
+            self.rows_dropped += len(rows) - cap
+            rows = rows[-cap:]
+        self._buf = deque(rows, maxlen=cap)
 
     async def flush_now(self) -> None:
         await self._flush()

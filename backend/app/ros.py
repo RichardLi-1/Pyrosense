@@ -64,32 +64,47 @@ def map_from_msg(msg) -> MapGrid:
                    data.reshape(h, w))
 
 
+def _cloud_reader(msg):
+    """(n, fields, col) for a PointCloud2; col(name, out_dtype) reads one field or returns None."""
+    n = int(msg.width) * int(msg.height)
+    fields = {f.name: f for f in msg.fields}
+    buf = bytes(msg.data) if not isinstance(msg.data, (bytes, bytearray)) else msg.data
+    step = int(msg.point_step)
+    endian = ">" if msg.is_bigendian else "<"
+
+    def col(name: str, out=np.float32) -> np.ndarray | None:
+        f = fields.get(name)
+        if f is None:
+            return None
+        dt = np.dtype(PF_DTYPES[int(f.datatype)]).newbyteorder(endian)
+        view = np.ndarray(shape=(n,), dtype=dt, buffer=buf, offset=int(f.offset), strides=(step,))
+        return view.astype(out)
+
+    return n, fields, col
+
+
 def points_from_pointcloud(msg) -> np.ndarray:
     """sensor_msgs/PointCloud2 -> float32 array of shape (N, 4): x, y, z, voc.
 
     Field offsets are read from the message, so any layout that carries x, y and
     voc works; z is optional.
     """
-    n = int(msg.width) * int(msg.height)
+    n, fields, col = _cloud_reader(msg)
     if n == 0:
         return np.zeros((0, 4), dtype=np.float32)
-    fields = {f.name: f for f in msg.fields}
-    buf = bytes(msg.data) if not isinstance(msg.data, (bytes, bytearray)) else msg.data
-    step = int(msg.point_step)
-    endian = ">" if msg.is_bigendian else "<"
-
-    def col(name: str) -> np.ndarray:
-        f = fields.get(name)
-        if f is None:
-            return np.zeros(n, dtype=np.float32)
-        dt = np.dtype(PF_DTYPES[int(f.datatype)]).newbyteorder(endian)
-        view = np.ndarray(shape=(n,), dtype=dt, buffer=buf, offset=int(f.offset), strides=(step,))
-        return view.astype(np.float32)
-
     missing = [k for k in ("x", "y", "voc") if k not in fields]
     if missing:
         raise ValueError(f"PointCloud2 lacks fields {missing}; have {sorted(fields)}")
-    return np.stack([col("x"), col("y"), col("z"), col("voc")], axis=1)
+    z = col("z")
+    return np.stack([col("x"), col("y"), z if z is not None else np.zeros(n, np.float32), col("voc")], axis=1)
+
+
+def point_times(msg) -> np.ndarray | None:
+    """Optional per-point `t` field (unix seconds, FLOAT64) -> float64 array, else None."""
+    n, fields, col = _cloud_reader(msg)
+    if "t" not in fields:
+        return None
+    return np.zeros(0) if n == 0 else col("t", np.float64)
 
 
 def map_to_png(grid: MapGrid) -> bytes:

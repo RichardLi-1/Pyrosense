@@ -34,7 +34,7 @@ BRIDGE_URL=ws://localhost:8765 DATABASE_URL=postgresql://postgres:postgres@local
 Then `curl localhost:8000/health`, open `http://localhost:8000/docs`, or connect a WebSocket to
 `ws://localhost:8000/ws/live`. Point `BRIDGE_URL` at the Pi's Tailscale IP for the real thing.
 
-Tests: `.venv/bin/python -m pytest` (no DB or bridge needed).
+Tests: `make test` from the repo root. DB tests (`tests/test_db.py`) run against a throwaway `hazard_test` database when `make db` is up and skip otherwise.
 
 ## Why not roslibpy
 

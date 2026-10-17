@@ -12,7 +12,7 @@ check() {
   meta=$(curl -s -m 40 -o "$body" -w '%{http_code} %{content_type}' "$BASE$path")
   code=${meta%% *}; type=${meta#* }
   if [[ $type == application/json* ]]; then
-    preview=$(jq -c 'if type == "array" then "[\(length) items] \(.[0] // "" | tostring)" else . end' "$body" | cut -c1-110)
+    preview=$(jq -rc 'if type == "array" then "[\(length) items] \(.[0] // "" | tostring)" else . end' "$body" | cut -c1-110)
   else
     preview="<$(wc -c < "$body" | tr -d ' ') bytes>"
   fi

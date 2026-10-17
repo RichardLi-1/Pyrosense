@@ -166,16 +166,16 @@ Solid arrows are the live path, which never waits on the database. Dashed arrows
 
 **Interface contract** (agree on this first). The Pi doesn't know about the database.
 
-`/voc_points` (`sensor_msgs/PointCloud2`, `map` frame), fields `x, y, z, voc` (float32, 16 bytes per point):
+`/voc_points` (`sensor_msgs/PointCloud2`, `map` frame), fields `x, y, z, voc` (float32) and `t` (float64, reading time in unix seconds), 24 bytes per point:
 
 ```yaml
 header: {stamp: {sec: 1729100000, nanosec: 123000000}, frame_id: map}
 width: 1842                      # points in this message
-fields: [x, y, z, voc]           # float32 each
-data: <width × 16 bytes>         # rosbridge sends this as base64
+fields: [x, y, z, voc, t]        # float32 ×4, then float64
+data: <width × 24 bytes>
 ```
 
-Each point is one gas reading, e.g. `x=3.21, y=-1.04, voc=412.0`. The message may hold only the newest reading or every reading so far. The backend handles both by only processing points it hasn't seen yet. Formats for every topic: [docs/ros-messages.md](docs/ros-messages.md).
+Each point is one gas reading, e.g. `x=3.21, y=-1.04, voc=412.0`. The message may hold only the newest reading or every reading so far. The backend handles both by only processing points whose `t` is newer than any it has seen. Formats for every topic: [docs/ros-messages.md](docs/ros-messages.md).
 
 plus periodic `/map` occupancy grid updates (width, height, resolution, origin, int8 data) and `/wearer_pose` (~5 Hz, `map` frame). The backend adds `session_id` and `wearer_id` before storing anything.
 
