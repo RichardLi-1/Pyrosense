@@ -247,3 +247,16 @@ The Pi must be reachable from the VM. Options, in order of simplicity:
 | `VOC_HOLD_SECONDS` | api | `5` |
 | `ALERT_COOLDOWN_SECONDS` | api | `60` |
 | `SENSOR_LAG_SECONDS` | voc_mapper (Pi) | `12` |
+
+
+## Implementation notes (backend as built, Oct 17)
+
+- Code lives in `backend/app/`; run/test instructions in `backend/README.md`.
+- **Ingest speaks the Foxglove WebSocket protocol directly** (`app/foxglove.py`), decoding CDR with
+  `mcap_ros2`. `roslibpy` was dropped because it implements the rosbridge protocol, which
+  `foxglove_bridge` does not serve. Same topics, same contract.
+- `voc_cells` is created with `materialized_only = false` so `/heatmap` includes readings newer than
+  the last 10 s refresh.
+- Extra `/ws/live` events beyond the table above: `voc` (each new sample), `bridge` (link state),
+  `hello` (on connect). Extra routes: `GET /map/meta`, `GET/POST /session`, `GET /health`.
+- `tools/fake_pi.py` is a Foxglove server that stands in for the Pi (walker + VOC source + spike).

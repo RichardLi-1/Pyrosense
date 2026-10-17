@@ -1,3 +1,5 @@
+> **Superseded (Oct 17):** the backend was built to `backend-architecture (2).md` + `CLAUDE.md` (foxglove_bridge, `readings`/`voc_cells` schema, `/heatmap` endpoints). This file is kept for the design rules and rationale; where they disagree, the newer docs win.
+
 # Software Architecture
 
 How data moves from the sensors on the helmet to the dashboard and into Tiger Cloud, the managed PostgreSQL + TimescaleDB service from Tiger Data. For the hardware, the team split, and the demo plan, see the [project README](../README.md).

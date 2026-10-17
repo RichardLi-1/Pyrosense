@@ -1,2 +1,7 @@
 .env
-tiger-cloud-db-64912-credentials.env
+tiger-cloud-db-64912-credentials.envbackend/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+dashboard/node_modules/
+dashboard/dist/
