@@ -72,7 +72,7 @@ export default function MapView(props: RendererProps) {
     const pred = predict(cells, bounds, model, SIGMA_M, model.res)
     if (!pred) { predicted.current = null; return }
     const g = predictedOnly(pred)
-    predicted.current = { img: bandImage(g, { minSupport: 0.5 }), lines: isolines(g, { minSupport: 0.5 }) }
+    predicted.current = { img: bandImage(g, { minSupport: 0.5, alphaScale: 3.2 }), lines: isolines(g, { minSupport: 0.5 }) }
   }, [model, cells])
 
   useEffect(() => {
@@ -201,9 +201,7 @@ export default function MapView(props: RendererProps) {
         pctx.globalCompositeOperation = 'source-over'
         pctx.clearRect(0, 0, w, h)
         pctx.imageSmoothingEnabled = true
-        pctx.globalAlpha = 2.2 // band fills are faint; predicted ones need more body before striping
         pctx.drawImage(pr.img.canvas, sx(pr.img.x0), sy(pr.img.y1), pr.img.w * c.scale, pr.img.h * c.scale)
-        pctx.globalAlpha = 1
         pctx.globalCompositeOperation = 'destination-out'
         pctx.setTransform(1, 0, 0, 1, 0, 0)
         pctx.fillStyle = stripes

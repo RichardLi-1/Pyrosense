@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Hazard Map is a wearable that maps the air inside a burning building, live: floor plan, position and every gas reading, streamed to a dashboard outside." />
+    <meta name="theme-color" content="#07090d" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <title>Hazard Map — See the air they're breathing</title>
+  </head>
+  <body>
+    <div class="scroll-space" aria-hidden="true"></div>
+
+    <div class="stage">
+      <canvas id="gl" aria-hidden="true"></canvas>
+
+      <!-- opening copy -->
+      <header class="intro" id="intro">
+        <h1 class="title">Hazard Map</h1>
+        <p class="tagline">A wearable that maps the air inside a burning building. Live.</p>
+        <p class="scroll-hint" aria-hidden="true">Scroll to put it on</p>
+      </header>
+
+      <!-- product shot -->
+      <div class="product" id="product">
+        <div class="product-head">
+          <span class="product-k">The device</span>
+          <h2>LiDAR, gas sensor, Pi. All on the hat.</h2>
+        </div>
+        <p class="callout" data-callout="0"><strong>RPLIDAR C1</strong><span>360° laser scanner</span></p>
+        <p class="callout" data-callout="1"><strong>Raspberry Pi 5</strong><span>SLAM on-device</span></p>
+        <p class="callout" data-callout="2"><strong>SGP40</strong><span>VOC gas sensor</span></p>
+      </div>
+
+      <!-- in-headset readouts (crisp overlay on the thermal image) -->
+      <div class="hud" id="hud" aria-hidden="true">
+        <div class="hud-tl">
+          <span class="hud-k">VOC</span>
+          <span class="hud-v num" id="hudVoc">42</span>
+          <span class="hud-l" id="hudLevel">Good</span>
+        </div>
+        <div class="hud-tr">
+          <span class="hud-k">Walk</span>
+          <span class="hud-v num" id="hudTime">00:00</span>
+        </div>
+        <div class="hud-br">
+          <span class="hud-k">Position</span>
+          <span class="hud-v num" id="hudPos">0.0 m</span>
+        </div>
+      </div>
+
+      <!-- warning -->
+      <div class="warn" id="warn" role="status" aria-live="polite">
+        <span class="warn-kicker">High VOC</span>
+        <span class="warn-value num">412</span>
+        <span class="warn-level">Hazardous</span>
+      </div>
+
+      <!-- problem statement, set into the lungs scene -->
+      <div class="problem" id="problem">
+        <p class="problem-h">Firefighters can't see what they're breathing.</p>
+        <p class="problem-s">Toxic VOCs build up in rooms long before smoke looks dangerous, and exposure adds up across a career.</p>
+      </div>
+
+      <!-- feature hints: plain text set into the scene -->
+      <div class="hints" id="hints">
+        <p class="hint" data-hint="0"><span class="hint-n">01</span><strong>Floor plan builds as you walk.</strong><span>LiDAR SLAM on the helmet draws the building in real time.</span></p>
+        <p class="hint" data-hint="1"><span class="hint-n">02</span><strong>Every breath mapped.</strong><span>Each gas reading is stamped on the map where it was taken.</span></p>
+        <p class="hint" data-hint="2"><span class="hint-n">03</span><strong>Exposure alerts before you'd notice.</strong><span>Banner outside, ring on the map, the moment the air turns.</span></p>
+        <p class="hint" data-hint="3"><span class="hint-n">04</span><strong>Predicts gas in rooms nobody's entered.</strong><span>Striped means predicted. The ring is the likely source.</span></p>
+        <p class="hint" data-hint="4"><span class="hint-n">05</span><strong>Replay the whole walk.</strong><span>Every position and reading, scrubbable, from the time-series store.</span></p>
+      </div>
+
+      <!-- outside: the dashboard, crisp, inside the cell-drawn laptop -->
+      <section class="end" id="end">
+        <div class="laptop" id="laptop">
+          <div class="dash" id="dash">
+            <div class="dash-top">
+              <span class="dash-brand">Hazard Map</span>
+              <span class="dash-status"><i></i>Live · 3 firefighters</span>
+              <span class="dash-alert">Exposure alert · FF-1 · Room 2</span>
+            </div>
+            <div class="dash-body">
+              <div class="dash-map">
+                <canvas id="dashMap" aria-label="Live floor plan with gas heat map"></canvas>
+                <div class="dash-legend">
+                  <span><i style="background:#1dd3b0"></i>Good</span>
+                  <span><i style="background:#ffd166"></i>Moderate</span>
+                  <span><i style="background:#ff8c42"></i>Poor</span>
+                  <span><i style="background:#ef233c"></i>Hazardous</span>
+                </div>
+              </div>
+              <aside class="dash-side">
+                <div class="dash-reading">
+                  <span class="dash-k">VOC · FF-1</span>
+                  <span class="dash-value mono" id="dashVoc">412</span>
+                  <span class="dash-level">Hazardous</span>
+                  <canvas id="dashSpark" aria-hidden="true"></canvas>
+                </div>
+                <ul class="dash-crew">
+                  <li><i class="ff ff-1"></i><span>FF-1</span><em class="mono">412</em></li>
+                  <li><i class="ff ff-2"></i><span>FF-2</span><em class="mono">88</em></li>
+                  <li><i class="ff ff-3"></i><span>FF-3</span><em class="mono">36</em></li>
+                </ul>
+              </aside>
+            </div>
+            <div class="dash-timeline">
+              <div class="dash-track"><div class="dash-fill" id="dashFill"></div><i class="dash-tick"></i><b class="dash-handle" id="dashHandle"></b></div>
+              <div class="dash-times mono"><span>14:02</span><span id="dashNow">14:09</span><span>14:14</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="cta" id="cta">
+          <h2>See the air they're breathing.</h2>
+          <p>The walk becomes a live floor plan, a gas map and exposure alerts, outside the building, as it happens.</p>
+          <div class="cta-row">
+            <a class="btn btn-primary" href="/">Open the dashboard</a>
+            <a class="btn btn-ghost" href="/?source=demo">Watch the demo</a>
+          </div>
+        </div>
+        <footer class="foot" id="foot">Built at Hack the Valley 11</footer>
+      </section>
+    </div>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

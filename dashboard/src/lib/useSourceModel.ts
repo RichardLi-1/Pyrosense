@@ -16,6 +16,7 @@ export function useSourceModel(meta: MapMeta | null, image: CanvasImageSource | 
     const w = new Worker(new URL('./model.worker.ts', import.meta.url), { type: 'module' })
     w.onmessage = (e: MessageEvent<{ id: number; model: SourceModel | null }>) => {
       if (e.data.id === seq.current) setModel(e.data.model)
+      if (location.search.includes('debug')) console.log('MODEL', JSON.stringify({ base: e.data.model?.base, L: e.data.model?.L, sources: e.data.model?.sources }))
       busy.current = false
       const next = pending.current
       pending.current = null

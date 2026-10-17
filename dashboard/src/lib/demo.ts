@@ -134,11 +134,11 @@ export function createDemoSource(): DataSource {
     return Math.max(5, v * (1 + 0.05 * Math.sin(t / 17)) + gauss() * 6)
   }
 
-  // ---- LiDAR: 360 rays per agent, marks free space and the first wall hit
+  // ---- LiDAR: 720 rays per agent (C1 does ~500/rev), marks free space and the first wall hit
   function scan(a: Agent) {
     const cx = (a.x - ORIGIN[0]) / RES, cy = (a.y - ORIGIN[1]) / RES
-    for (let i = 0; i < 360; i++) {
-      const ang = (i / 360) * Math.PI * 2
+    for (let i = 0; i < 720; i++) {
+      const ang = (i / 720) * Math.PI * 2
       const dx = Math.cos(ang), dy = Math.sin(ang)
       for (let s = 0; s < LIDAR_M / RES; s += 0.7) {
         const c = Math.floor(cx + dx * s), r = Math.floor(cy + dy * s)

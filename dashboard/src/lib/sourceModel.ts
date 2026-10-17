@@ -21,17 +21,23 @@ export type SourceModel = {
 }
 
 const MAX_SOURCES = 3
+// Ridge on strength: a source must be "paid for" by readings near it. Without it a far
+// source with a huge strength explains nearby readings as well as a close, weak one.
+const RIDGE = 0.05
+const MAX_Q_FACTOR = 4 // strength at most 4x the largest excess reading
+const MAX_REACH = 6 // m: a source must be within this walking distance of some reading
 const LS = [1.5, 2.5, 4]
 const SQ2 = Math.SQRT2
 
 /** Geodesic distance (metres) from cell `from` to every cell, 8-connected, no corner cutting. */
-export function geodesic(g: PassGrid, from: number, maxM = Infinity): Float32Array {
+export function geodesic(g: PassGrid, from: number, maxM = Infinity): Float64Array {
   const { cols, rows, pass, res } = g
   const n = cols * rows
-  const dist = new Float32Array(n).fill(Infinity)
+  const dist = new Float64Array(n).fill(Infinity) // float64 throughout: float32 rounding re-queues cells forever
+  const done = new Uint8Array(n)
   if (!pass[from]) return dist
-  // binary heap of (dist, idx)
-  const hd = new Float32Array(n * 4), hi = new Int32Array(n * 4)
+  // binary heap of (dist, idx); lazy deletion, so a cell can be pushed once per neighbour
+  const hd = new Float64Array(n * 8 + 8), hi = new Int32Array(n * 8 + 8)
   let size = 0
   const push = (d: number, i: number) => {
     let k = size++
@@ -56,14 +62,15 @@ export function geodesic(g: PassGrid, from: number, maxM = Infinity): Float32Arr
   push(0, from)
   while (size) {
     const [d, i] = pop()
-    if (d > dist[i] || d > maxM) continue
+    if (done[i] || d > maxM) continue
+    done[i] = 1
     const c = i % cols, r = (i - c) / cols
     for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
       if (!dx && !dy) continue
       const cc = c + dx, rr = r + dy
       if (cc < 0 || rr < 0 || cc >= cols || rr >= rows) continue
       const j = rr * cols + cc
-      if (!pass[j]) continue
+      if (!pass[j] || done[j]) continue
       if (dx && dy && (!pass[r * cols + cc] || !pass[rr * cols + c])) continue // no squeezing past corners
       const nd = d + (dx && dy ? SQ2 : 1) * res
       if (nd < dist[j]) { dist[j] = nd; push(nd, j) }
@@ -87,6 +94,7 @@ export function fitSourceModel(g: PassGrid, obs: Obs[]): SourceModel | null {
   const base = percentile(obs.map((o) => o.v), 0.25)
   const oi = obs.map((o) => cell(o.x, o.y))
   const resid0 = obs.map((o) => o.v - base)
+  const qMax = MAX_Q_FACTOR * Math.max(1, ...resid0)
   const sse = (r: number[]) => r.reduce((s, x, i) => s + obs[i].w * x * x, 0)
 
   // candidate lattice over passable cells
@@ -114,12 +122,15 @@ export function fitSourceModel(g: PassGrid, obs: Obs[]): SourceModel | null {
     for (let k = 0; k < MAX_SOURCES; k++) {
       const score = (ci: number) => {
         const d = distAtObs(ci)
+        let near = Infinity
+        for (let i = 0; i < d.length; i++) if (d[i] < near) near = d[i]
+        if (near > MAX_REACH) return { q: 0, gain: 0 } // no evidence anywhere near: don't invent a source
         let num = 0, den = 0
         for (let i = 0; i < obs.length; i++) {
           const phi = Math.exp(-d[i] / L)
           num += obs[i].w * phi * resid[i]; den += obs[i].w * phi * phi
         }
-        const q = den > 1e-9 ? Math.max(0, num / den) : 0
+        const q = Math.min(qMax, Math.max(0, num / (den + RIDGE)))
         return { q, gain: q * num }
       }
       let top = { ci: -1, q: 0, gain: 0 }
@@ -149,7 +160,7 @@ export function fitSourceModel(g: PassGrid, obs: Obs[]): SourceModel | null {
           const other = chosen.reduce((acc, o) => (o === s ? acc : acc + o.q * Math.exp(-distAtObs(o.ci)[i] / L)), 0)
           num += obs[i].w * phi * (resid0[i] - other); den += obs[i].w * phi * phi
         }
-        s.q = den > 1e-9 ? Math.max(0, num / den) : 0
+        s.q = Math.min(qMax, Math.max(0, num / (den + RIDGE)))
       }
     }
     const final = resid0.map((x, i) => x - chosen.reduce((a, s) => a + s.q * Math.exp(-distAtObs(s.ci)[i] / L), 0))

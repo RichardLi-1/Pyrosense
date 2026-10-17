@@ -67,8 +67,8 @@ function estimator(g: Grid, minSupport: number, prior?: Prior, priorWeight = 0.5
  * at `predictedAlpha`. Contour lines come from isolines().
  */
 export function bandImage(g: Grid, opts: { minSupport?: number; prior?: Prior; priorWeight?: number;
-                                            predictedAlpha?: number } = {}): HeatImage {
-  const { minSupport = 0.3, prior, priorWeight = 0.5, predictedAlpha = 1 } = opts
+                                            predictedAlpha?: number; alphaScale?: number } = {}): HeatImage {
+  const { minSupport = 0.3, prior, priorWeight = 0.5, predictedAlpha = 1, alphaScale = 1 } = opts
   const { cols: W, rows: H } = g
   const est = estimator(g, minSupport, prior, priorWeight)
   const canvas = document.createElement('canvas')
@@ -80,7 +80,7 @@ export function bandImage(g: Grid, opts: { minSupport?: number; prior?: Prior; p
     if (prior == null && g.den[i] < minSupport) continue
     const name = level(est(i))
     const thin = prior != null && g.den[i] / (g.den[i] + priorWeight) < 0.5
-    const a = FILL[name] * (thin ? predictedAlpha : 1)
+    const a = Math.min(1, FILL[name] * alphaScale * (thin ? predictedAlpha : 1))
     const o = ((H - 1 - r) * W + c) * 4
     const [cr, cg, cb] = BAND_RGB[name]
     img.data[o] = cr; img.data[o + 1] = cg; img.data[o + 2] = cb; img.data[o + 3] = Math.round(255 * a)
