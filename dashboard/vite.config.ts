@@ -5,9 +5,9 @@ import { defineConfig } from 'vite'
 export default defineConfig({
   plugins: [react()],
   server: {
-    // Forward API and live websocket calls to the FastAPI backend
+    // Same paths as deploy/nginx.conf: /api/<route> -> backend /<route>, /ws/live as-is
     proxy: {
-      '/api': 'http://localhost:8000',
+      '/api': { target: 'http://localhost:8000', rewrite: (p) => p.replace(/^\/api/, '') },
       '/ws': { target: 'ws://localhost:8000', ws: true },
     },
   },
