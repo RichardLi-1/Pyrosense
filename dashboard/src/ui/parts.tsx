@@ -44,14 +44,14 @@ export function Sparkline({ points, width = 220, height = 36 }: { points: [numbe
 }
 
 /** Shown only while an alert is recent. */
-export function AlertBanner({ alerts, now, holdMs = 30_000 }: { alerts: Alert[]; now: number; holdMs?: number }) {
+export function AlertBanner({ alerts, now, holdMs = 30_000, crew = 1 }: { alerts: Alert[]; now: number; holdMs?: number; crew?: number }) {
   const [dismissed, setDismissed] = useState<string | null>(null)
   const a = alerts[0]
   if (!a || a.ts === dismissed || now - Date.parse(a.ts) > holdMs) return null
   const ago = Math.max(0, Math.round((now - Date.parse(a.ts)) / 1000))
   return (
     <div className="alert-banner" role="alert" onClick={() => setDismissed(a.ts)}>
-      <strong>High VOC</strong>
+      <strong>High VOC{crew > 1 && a.wearer ? ` · ${a.wearer}` : ''}</strong>
       <span>VOC {fmt(a.voc)} at ({a.x.toFixed(1)}, {a.y.toFixed(1)}) m · {ago}s ago</span>
     </div>
   )
@@ -59,7 +59,7 @@ export function AlertBanner({ alerts, now, holdMs = 30_000 }: { alerts: Alert[];
 
 export function Status({ s }: { s: Dashboard }) {
   const state = s.until != null ? 'replay' : !s.connected ? 'offline' : s.kind === 'demo' ? 'demo' : !s.bridge ? 'nopi' : 'live'
-  const text = { replay: 'Replay', offline: 'Reconnecting…', demo: 'Demo data', nopi: 'Waiting for device', live: 'Live' }[state]
+  const text = { replay: 'Replay', offline: 'Reconnecting…', demo: 'Simulation', nopi: 'Waiting for device', live: 'Live' }[state]
   return <span className={`status status--${state}`}><i className="dot" />{text}</span>
 }
 
@@ -165,4 +165,37 @@ export function SummaryButton({ s, load }: { s: Dashboard; load: (force?: boolea
 export function Waiting({ s }: { s: Dashboard }) {
   if (s.meta) return null
   return <div className="waiting">{s.connected ? 'Waiting for the first scan…' : 'Connecting…'}</div>
+}
+
+const deg = (r: number) => `${Math.round((r * 180) / Math.PI)}°`
+
+/** Roll / pitch / yaw of the selected wearer, one quiet line. Roll and pitch need an IMU. */
+export function Attitude({ pose }: { pose: Dashboard['pose'] }) {
+  if (!pose) return null
+  const yaw = ((pose.heading * 180) / Math.PI + 360) % 360
+  return (
+    <span className="attitude mono" title="Roll · pitch · yaw (heading)">
+      {pose.roll != null && <>R {deg(pose.roll)} · </>}
+      {pose.pitch != null && <>P {deg(pose.pitch)} · </>}
+      Y {Math.round(yaw)}°
+    </span>
+  )
+}
+
+/** Pick whose reading to show (only when there's more than one wearer). */
+export function Crew({ s, select, colors }: { s: Dashboard; select: (id: string) => void; colors: string[] }) {
+  if (s.crew.length < 2) return null
+  return (
+    <div className="crew" role="group" aria-label="Firefighter">
+      {s.crew.map((id, i) => {
+        const v = s.wearers[id]?.voc
+        return (
+          <button key={id} className={id === s.selected ? 'on' : ''} onClick={() => select(id)} title={`Firefighter ${id}`}>
+            <i style={{ background: colors[i % colors.length] }} />{id}
+            {v != null && <span className="mono" style={{ color: levelColor(v) }}>{v.toFixed(0)}</span>}
+          </button>
+        )
+      })}
+    </div>
+  )
 }

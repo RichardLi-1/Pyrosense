@@ -6,5 +6,6 @@ export type DesignProps = {
   s: Dashboard
   setUntil: (t: number | null) => void
   loadSummary: (force?: boolean) => void
+  select: (wearer: string) => void
   view: ViewOptions
 }

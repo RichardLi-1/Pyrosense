@@ -40,7 +40,7 @@ export default function App() {
 }
 
 function Dashboard({ source }: { source: DataSource }) {
-  const { s, setUntil, loadSummary } = useDashboard(source)
+  const { s, setUntil, loadSummary, select } = useDashboard(source)
   const [design, setDesign] = useState<DesignName>(initialDesign)
   const [view, setView] = useState<ViewOptions>({ follow: false, showHeat: true, showTrail: true })
 
@@ -63,7 +63,7 @@ function Dashboard({ source }: { source: DataSource }) {
   }, [])
 
   const Design = DESIGNS[design]
-  const props: DesignProps = useMemo(() => ({ s, setUntil, loadSummary, view }), [s, setUntil, loadSummary, view])
+  const props: DesignProps = useMemo(() => ({ s, setUntil, loadSummary, view, select }), [s, setUntil, loadSummary, view, select])
   return (
     <div className={`t-${design}`}>
       <Design {...props} />

@@ -145,3 +145,34 @@ button:disabled { opacity: 0.5; cursor: default; }
 .d-dusk .reading-value { font-size: 48px; font-weight: 300; }
 .d-dusk .k-end { display: flex; gap: 22px; align-items: center; }
 .d-dusk .summary-pop { top: auto; bottom: calc(100% + 16px); }
+
+/* ---- map controls + legend (all designs) ---------------------------------- */
+.map-3d { position: absolute; inset: 0; }
+.map-ctrl { position: absolute; z-index: 4; display: flex; gap: 8px; align-items: center; }
+.map-btn, .map-seg {
+  height: 30px; border-radius: 999px; background: var(--pop); border: 1px solid var(--line);
+  box-shadow: 0 4px 16px rgba(0,0,0,.18);
+}
+.map-btn { display: inline-flex; align-items: center; gap: 6px; padding: 0 12px 0 10px; font-size: 12px; color: var(--text); animation: fade .2s ease-out; }
+.map-btn:hover { border-color: color-mix(in srgb, var(--text) 30%, transparent); }
+.map-seg { display: inline-flex; padding: 2px; }
+.map-seg button { font-size: 11px; font-weight: 600; letter-spacing: .02em; padding: 0 10px; border-radius: 999px; color: var(--muted); }
+.map-seg button.on { background: var(--text); color: var(--bg); }
+.legend {
+  position: absolute; z-index: 4; display: flex; gap: 14px; align-items: center; font-size: 11px; color: var(--muted);
+  padding: 7px 12px; border-radius: 999px; background: color-mix(in srgb, var(--bg) 70%, transparent); backdrop-filter: blur(6px);
+}
+.legend span { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.legend i { width: 10px; height: 10px; border-radius: 3px; }
+.legend-note { padding-left: 10px; border-left: 1px solid var(--line); }
+
+/* ---- crew + attitude ----------------------------------------------------- */
+.attitude { font-size: 11px; color: var(--muted); opacity: .8; letter-spacing: .01em; white-space: nowrap; }
+.crew { display: flex; gap: 4px; pointer-events: auto; }
+.crew button { display: inline-flex; align-items: center; gap: 6px; height: 26px; padding: 0 9px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; color: var(--muted); border: 1px solid transparent; }
+.crew button.on { color: var(--text); border-color: var(--line); background: var(--pop); }
+.crew button i { width: 8px; height: 8px; border-radius: 50%; }
+.crew button .mono { font-weight: 400; font-size: 11px; }
+.f-reading .crew { margin-top: 4px; }
+.k-start { display: flex; flex-direction: column; gap: 4px; }

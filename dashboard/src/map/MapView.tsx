@@ -1,44 +1,34 @@
 import { useEffect, useRef } from 'react'
-import { lut } from '../lib/colors'
-import type { Alert, HeatCell, MapMeta, Pose, TrailPoint } from '../lib/types'
-import { CELL_SIZE } from '../lib/types'
-import type { MapTheme } from './theme'
-
-type Props = {
-  theme: MapTheme
-  meta: MapMeta | null
-  image: CanvasImageSource | null
-  heat: HeatCell[]
-  trail: TrailPoint[]
-  pose: Pose | null
-  alerts: Alert[]
-  follow: boolean
-  showHeat: boolean
-  showTrail: boolean
-  /** Screen-space insets (px) the camera should keep clear, for overlaid UI. */
-  inset?: { top?: number; right?: number; bottom?: number; left?: number }
-}
+import { bandImage, isolines, kernelGrid, strokeIsolines, type HeatImage, type Isoline } from '../lib/heatImage'
+import { predict, predictedOnly } from '../lib/predict'
+import { DEFAULT_WEARER } from '../lib/types'
+import { drawHardHat } from './theme'
+import { TRAIL_S, crewColor, insets, type RendererProps } from './types'
 
 type Camera = { cx: number; cy: number; scale: number } // metres, px per metre
 
-const W_REF = 1.2 // kernel-weighted sample weight at which heat is fully opaque
-const TRAIL_S = 90 // seconds of trail shown, fading with age
-const KERNEL_R = 5 // cells (1 m)
-const KERNEL = Float32Array.from({ length: (2 * KERNEL_R + 1) ** 2 }, (_, i) => {
-  const dx = (i % (2 * KERNEL_R + 1)) - KERNEL_R, dy = Math.floor(i / (2 * KERNEL_R + 1)) - KERNEL_R
-  const d2 = dx * dx + dy * dy
-  return d2 > KERNEL_R * KERNEL_R ? 0 : Math.exp(-d2 / (2 * 2.2 * 2.2)) // sigma 0.44 m
-})
+const SIGMA_M = 0.3 // heat spreads ~1 m around each reading: hugs the path, no blobs
 
-export default function MapView(props: Props) {
+/** Diagonal stripes, used to cut predicted areas so they read as "not measured". */
+function stripePattern(ctx: CanvasRenderingContext2D) {
+  const c = document.createElement('canvas')
+  c.width = c.height = 8
+  const g = c.getContext('2d')!
+  g.strokeStyle = '#000'; g.lineWidth = 3
+  g.beginPath(); g.moveTo(-2, 10); g.lineTo(10, -2); g.moveTo(6, 10); g.lineTo(10, 6); g.moveTo(-2, 2); g.lineTo(2, -2); g.stroke()
+  return ctx.createPattern(c, 'repeat')!
+}
+
+export default function MapView(props: RendererProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const p = useRef(props)
   p.current = props
+  const manual = useRef(false)
 
   // Re-render the occupancy grid in theme colours whenever the map or theme changes.
   const occ = useRef<HTMLCanvasElement | null>(null)
   const free = useRef<HTMLCanvasElement | null>(null) // scanned free space, to clip heat at walls
-  const { image, meta, theme, heat: cells } = props
+  const { image, meta, theme, heat: cells, recenter, onMoved, model } = props
   useEffect(() => {
     if (!image || !meta) return
     const c = document.createElement('canvas')
@@ -64,56 +54,47 @@ export default function MapView(props: Props) {
     free.current = mc
   }, [image, meta, theme])
 
-  // Heat: kernel-weighted mean of the 20 cm cells (docs/voc-mapping.md), so sparse
-  // readings read as areas. One pixel per cell; drawn scaled + lightly blurred.
-  const heat = useRef<{ c: HTMLCanvasElement; x0: number; y1: number; w: number; h: number } | null>(null)
+  // Heat: crisp level bands from the kernel-smoothed 20 cm cells.
+  const heat = useRef<HeatImage | null>(null)
+  const contours = useRef<Isoline[]>([])
   useEffect(() => {
-    if (!cells.length) { heat.current = null; return }
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
-    for (const c of cells) {
-      minX = Math.min(minX, c.cx); maxX = Math.max(maxX, c.cx); minY = Math.min(minY, c.cy); maxY = Math.max(maxY, c.cy)
-    }
-    const pad = KERNEL_R + 1
-    const w = maxX - minX + 1 + pad * 2, h = maxY - minY + 1 + pad * 2
-    const num = new Float32Array(w * h), den = new Float32Array(w * h)
-    for (const cell of cells) {
-      const col = cell.cx - minX + pad, row = maxY + pad - cell.cy
-      for (let dy = -KERNEL_R; dy <= KERNEL_R; dy++) for (let dx = -KERNEL_R; dx <= KERNEL_R; dx++) {
-        const k = KERNEL[(dy + KERNEL_R) * (2 * KERNEL_R + 1) + dx + KERNEL_R] * cell.weight
-        if (!k) continue
-        const i = (row + dy) * w + col + dx
-        num[i] += k * cell.mean; den[i] += k
-      }
-    }
-    const c = document.createElement('canvas')
-    c.width = w; c.height = h
-    const g = c.getContext('2d')!
-    const img = g.createImageData(w, h)
-    for (let i = 0; i < den.length; i++) {
-      if (den[i] < 0.03) continue
-      const mean = num[i] / den[i]
-      const [r, gg, b] = lut(mean)
-      const conf = Math.min(1, den[i] / W_REF)
-      const strength = 0.05 + 0.95 * Math.min(1, Math.max(0, (mean - 110) / 150)) ** 0.8 // near-invisible when air is fine
-      img.data[i * 4] = r; img.data[i * 4 + 1] = gg; img.data[i * 4 + 2] = b
-      img.data[i * 4 + 3] = Math.round(255 * conf * strength)
-    }
-    g.putImageData(img, 0, 0)
-    heat.current = { c, x0: (minX - pad) * CELL_SIZE, y1: (maxY + 1 + pad) * CELL_SIZE, w: w * CELL_SIZE, h: h * CELL_SIZE }
+    const g = kernelGrid(cells, SIGMA_M, 0.05)
+    heat.current = g ? bandImage(g) : null
+    contours.current = g ? isolines(g) : []
   }, [cells])
+
+  // Predicted (not yet measured) areas from the source model: drawn striped, and not
+  // clipped to scanned space, since the point is to show what's behind unexplored doors.
+  const predicted = useRef<{ img: HeatImage; lines: Isoline[] } | null>(null)
+  useEffect(() => {
+    if (!model || !cells.length) { predicted.current = null; return }
+    const bounds = { x0: model.x0, y0: model.y0, x1: model.x0 + model.cols * model.res, y1: model.y0 + model.rows * model.res }
+    const pred = predict(cells, bounds, model, SIGMA_M, model.res)
+    if (!pred) { predicted.current = null; return }
+    const g = predictedOnly(pred)
+    predicted.current = { img: bandImage(g, { minSupport: 0.5 }), lines: isolines(g, { minSupport: 0.5 }) }
+  }, [model, cells])
+
+  useEffect(() => {
+    if (recenter) { manual.current = false; onMoved(false) }
+  }, [recenter, onMoved])
 
   useEffect(() => {
     const canvas = canvasRef.current!
     const ctx = canvas.getContext('2d')!
     const layer = document.createElement('canvas')
     const lctx = layer.getContext('2d')!
+    const play = document.createElement('canvas')
+    const pctx = play.getContext('2d')!
+    const stripes = stripePattern(pctx)
     let raf = 0
     let cam: Camera | null = null
-    let manual = false
-    let shown: { x: number; y: number; h: number } | null = null
+    const shown = new Map<string, { x: number; y: number; h: number }>()
     const seenAlerts = new Set<string>()
     const rings: { x: number; y: number; t0: number }[] = []
-    let first = true
+    const setManual = () => {
+      if (!manual.current) { manual.current = true; p.current.onMoved(true) }
+    }
 
     const size = () => {
       const r = canvas.getBoundingClientRect()
@@ -126,7 +107,7 @@ export default function MapView(props: Props) {
     const fit = (w: number, h: number): Camera | null => {
       const m = p.current.meta
       if (!m) return null
-      const ins = { top: 0, right: 0, bottom: 0, left: 0, ...p.current.inset }
+      const ins = insets(p.current.inset)
       const aw = Math.max(50, w - ins.left - ins.right), ah = Math.max(50, h - ins.top - ins.bottom)
       const mw = m.w * m.res, mh = m.h * m.res
       const scale = Math.min(aw / mw, ah / mh) * 0.9
@@ -143,26 +124,27 @@ export default function MapView(props: Props) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
       ctx.clearRect(0, 0, w, h)
 
-      // wearer position glides toward the latest pose
-      if (P.pose) {
-        if (!shown) shown = { x: P.pose.x, y: P.pose.y, h: P.pose.heading }
+      // each wearer glides toward their latest pose
+      for (const { id, pose } of P.poses) {
+        let sh = shown.get(id)
+        if (!sh) { sh = { x: pose.x, y: pose.y, h: pose.heading }; shown.set(id, sh) }
         const k = 0.18
-        shown.x += (P.pose.x - shown.x) * k
-        shown.y += (P.pose.y - shown.y) * k
-        const dh = Math.atan2(Math.sin(P.pose.heading - shown.h), Math.cos(P.pose.heading - shown.h))
-        shown.h += dh * k
+        sh.x += (pose.x - sh.x) * k
+        sh.y += (pose.y - sh.y) * k
+        sh.h += Math.atan2(Math.sin(pose.heading - sh.h), Math.cos(pose.heading - sh.h)) * k
       }
+      const me = shown.get(P.selected)
 
       // camera: fit (default), follow, or wherever the user left it
       let target: Camera | null = null
-      if (P.follow && shown) target = { cx: shown.x, cy: shown.y, scale: cam?.scale ?? fit(w, h)?.scale ?? 40 }
-      else if (!manual) target = fit(w, h)
+      if (P.follow && me) target = { cx: me.x, cy: me.y, scale: cam?.scale ?? fit(w, h)?.scale ?? 40 }
+      else if (!manual.current) target = fit(w, h)
       if (target) {
-        if (!cam || first) { cam = { ...target }; first = false }
+        if (!cam) cam = { ...target }
         else {
-          cam.cx += (target.cx - cam.cx) * 0.08
-          cam.cy += (target.cy - cam.cy) * 0.08
-          cam.scale += (target.scale - cam.scale) * 0.08
+          cam.cx += (target.cx - cam.cx) * 0.1
+          cam.cy += (target.cy - cam.cy) * 0.1
+          cam.scale += (target.scale - cam.scale) * 0.1
         }
       }
       if (!cam) return
@@ -184,26 +166,25 @@ export default function MapView(props: Props) {
 
       // occupancy grid (north-up PNG: top-left corner is (origin.x, origin.y + h*res))
       const m = P.meta
-      if (m && occ.current) {
+      const mapRect = m && [sx(m.origin[0]), sy(m.origin[1] + m.h * m.res), m.w * m.res * c.scale, m.h * m.res * c.scale] as const
+      if (mapRect && occ.current) {
         ctx.imageSmoothingEnabled = false
-        ctx.drawImage(occ.current, sx(m.origin[0]), sy(m.origin[1] + m.h * m.res), m.w * m.res * c.scale, m.h * m.res * c.scale)
+        ctx.drawImage(occ.current, ...mapRect)
       }
 
-      // heat
-      // heat, blurred on its own layer, then clipped to scanned free space so it stops at walls
+      // heat on its own layer, clipped to scanned free space so it stops at walls
       const hm = heat.current
-      if (P.showHeat && hm && m && free.current) {
+      if (P.showHeat && hm && mapRect && free.current) {
         if (layer.width !== canvas.width || layer.height !== canvas.height) { layer.width = canvas.width; layer.height = canvas.height }
         lctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         lctx.globalCompositeOperation = 'source-over'
         lctx.clearRect(0, 0, w, h)
         lctx.imageSmoothingEnabled = true
-        lctx.imageSmoothingQuality = 'high'
-        lctx.filter = `blur(${T.heatBlur}px)`
-        lctx.drawImage(hm.c, sx(hm.x0), sy(hm.y1), hm.w * c.scale, hm.h * c.scale)
-        lctx.filter = 'none'
+        lctx.drawImage(hm.canvas, sx(hm.x0), sy(hm.y1), hm.w * c.scale, hm.h * c.scale)
+        strokeIsolines(lctx, contours.current, sx, sy, 1.5)
         lctx.globalCompositeOperation = 'destination-in'
-        lctx.drawImage(free.current, sx(m.origin[0]), sy(m.origin[1] + m.h * m.res), m.w * m.res * c.scale, m.h * m.res * c.scale)
+        lctx.imageSmoothingEnabled = false
+        lctx.drawImage(free.current, ...mapRect)
         ctx.save()
         ctx.setTransform(1, 0, 0, 1, 0, 0)
         ctx.globalCompositeOperation = T.heatBlend
@@ -212,18 +193,69 @@ export default function MapView(props: Props) {
         ctx.restore()
       }
 
-      // trail: the last 90 s in one quiet colour, fading with age (the heat carries VOC)
-      if (P.showTrail && P.trail.length > 1) {
-        const tEnd = Date.parse(P.trail[P.trail.length - 1].ts)
-        const pts = P.trail.filter((pt) => Date.parse(pt.ts) >= tEnd - TRAIL_S * 1000)
+      // predicted areas: striped band fills + thin contours, plus likely sources
+      const pr = predicted.current
+      if (P.showHeat && pr) {
+        if (play.width !== canvas.width || play.height !== canvas.height) { play.width = canvas.width; play.height = canvas.height }
+        pctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        pctx.globalCompositeOperation = 'source-over'
+        pctx.clearRect(0, 0, w, h)
+        pctx.imageSmoothingEnabled = true
+        pctx.globalAlpha = 2.2 // band fills are faint; predicted ones need more body before striping
+        pctx.drawImage(pr.img.canvas, sx(pr.img.x0), sy(pr.img.y1), pr.img.w * c.scale, pr.img.h * c.scale)
+        pctx.globalAlpha = 1
+        pctx.globalCompositeOperation = 'destination-out'
+        pctx.setTransform(1, 0, 0, 1, 0, 0)
+        pctx.fillStyle = stripes
+        pctx.fillRect(0, 0, play.width, play.height)
+        pctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        pctx.globalCompositeOperation = 'source-over'
+        pctx.globalAlpha = 0.55
+        strokeIsolines(pctx, pr.lines, sx, sy, 1)
+        pctx.globalAlpha = 1
+        ctx.save()
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.globalCompositeOperation = T.heatBlend
+        ctx.drawImage(play, 0, 0)
+        ctx.restore()
+      }
+      if (P.showHeat && P.model) {
+        ctx.save()
+        ctx.setLineDash([3, 4])
+        ctx.lineWidth = 1.25
+        ctx.strokeStyle = T.alert
+        ctx.fillStyle = T.alert
+        ctx.font = '500 10px Inter, system-ui, sans-serif'
+        ctx.textAlign = 'center'
+        for (const src of P.model.sources) {
+          if (src.q < 120) continue
+          const x = sx(src.x), y = sy(src.y), r = 0.9 * c.scale
+          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke()
+          ctx.fillText('likely source', x, y - r - 6)
+        }
+        ctx.restore()
+      }
+
+      // trails: the last 90 s per wearer, fading with age (the heat carries VOC)
+      const byWearer = new Map<string, typeof P.trail>()
+      if (P.showTrail) for (const pt of P.trail) {
+        const id = pt.wearer ?? DEFAULT_WEARER
+        let list = byWearer.get(id)
+        if (!list) byWearer.set(id, (list = []))
+        list.push(pt)
+      }
+      for (const [id, trail] of byWearer) {
+        if (trail.length < 2) continue
+        const tEnd = Date.parse(trail[trail.length - 1].ts)
+        const pts = trail.filter((pt) => Date.parse(pt.ts) >= tEnd - TRAIL_S * 1000)
         const chunks = 8
-        ctx.strokeStyle = T.trail
+        ctx.strokeStyle = P.poses.length > 1 ? crewColor(T.crew, T.badge, P.poses, id) : T.trail
         ctx.lineWidth = 1.5
         ctx.lineJoin = ctx.lineCap = 'round'
         for (let k = 0; k < chunks; k++) {
           const a = Math.floor((k * (pts.length - 1)) / chunks), b = Math.floor(((k + 1) * (pts.length - 1)) / chunks)
           if (b <= a) continue
-          ctx.globalAlpha = (k + 1) / chunks
+          ctx.globalAlpha = ((k + 1) / chunks) * (P.poses.length > 1 ? 0.45 : 1)
           ctx.beginPath()
           ctx.moveTo(sx(pts[a].x), sy(pts[a].y))
           for (let i = a + 1; i <= b; i++) ctx.lineTo(sx(pts[i].x), sy(pts[i].y))
@@ -234,9 +266,8 @@ export default function MapView(props: Props) {
 
       // alerts: a small ring where each fired; a new one expands once
       for (const a of P.alerts) {
-        const key = `${a.ts}`
-        if (!seenAlerts.has(key)) {
-          seenAlerts.add(key)
+        if (!seenAlerts.has(a.ts)) {
+          seenAlerts.add(a.ts)
           if (Date.now() - Date.parse(a.ts) < 15_000) rings.push({ x: a.x, y: a.y, t0: now })
         }
         ctx.strokeStyle = T.alert
@@ -257,22 +288,37 @@ export default function MapView(props: Props) {
         ctx.globalAlpha = 1
       }
 
-      // wearer
-      if (shown) {
-        const x = sx(shown.x), y = sy(shown.y)
-        const pulse = (now % 2000) / 2000
-        ctx.fillStyle = T.halo
-        ctx.beginPath(); ctx.arc(x, y, 8 + pulse * 14, 0, Math.PI * 2)
-        ctx.globalAlpha = 1 - pulse; ctx.fill(); ctx.globalAlpha = 1
-        // heading cone
-        const g = ctx.createRadialGradient(x, y, 0, x, y, 34)
+      // wearers: hard-hat badges with heading cones; the selected one larger, with a pulse
+      const crew = P.poses.length > 1
+      for (const { id } of [...P.poses].sort((a, b) => (a.id === P.selected ? 1 : 0) - (b.id === P.selected ? 1 : 0))) {
+        const sh = shown.get(id)
+        if (!sh) continue
+        const sel = id === P.selected
+        const x = sx(sh.x), y = sy(sh.y)
+        const color = crewColor(T.crew, T.badge, P.poses, id)
+        if (sel) {
+          const pulse = (now % 2200) / 2200
+          ctx.fillStyle = T.halo
+          ctx.globalAlpha = 1 - pulse
+          ctx.beginPath(); ctx.arc(x, y, 15 + pulse * 18, 0, Math.PI * 2); ctx.fill()
+          ctx.globalAlpha = 1
+        }
+        const cone = sel ? 58 : 40
+        const g = ctx.createRadialGradient(x, y, 10, x, y, cone)
         g.addColorStop(0, T.halo); g.addColorStop(1, 'rgba(0,0,0,0)')
         ctx.fillStyle = g
         ctx.beginPath(); ctx.moveTo(x, y)
-        ctx.arc(x, y, 34, -shown.h - 0.45, -shown.h + 0.45)
+        ctx.arc(x, y, cone, -sh.h - 0.42, -sh.h + 0.42)
         ctx.closePath(); ctx.fill()
-        ctx.fillStyle = T.person
-        ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill()
+        ctx.shadowColor = 'rgba(0,0,0,0.35)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 2
+        drawHardHat(ctx, x, y, sel ? 14 : 11, color, T.icon)
+        ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0
+        if (crew) {
+          ctx.fillStyle = color
+          ctx.font = '600 11px Inter, system-ui, sans-serif'
+          ctx.textAlign = 'left'
+          ctx.fillText(id, x + (sel ? 18 : 15), y + 4)
+        }
       }
     }
     raf = requestAnimationFrame(frame)
@@ -282,7 +328,7 @@ export default function MapView(props: Props) {
     const onWheel = (e: WheelEvent) => {
       if (!cam) return
       e.preventDefault()
-      manual = true
+      setManual()
       const { x, y } = pt(e), r = canvas.getBoundingClientRect()
       const wx = (x - r.width / 2) / cam.scale + cam.cx, wy = (r.height / 2 - y) / cam.scale + cam.cy
       cam.scale = Math.min(400, Math.max(5, cam.scale * Math.exp(-e.deltaY * 0.0015)))
@@ -294,13 +340,14 @@ export default function MapView(props: Props) {
     const onMove = (e: MouseEvent) => {
       if (!drag || !cam) return
       const q = pt(e)
+      if (q.x === drag.x && q.y === drag.y) return
       cam.cx -= (q.x - drag.x) / cam.scale
       cam.cy += (q.y - drag.y) / cam.scale
       drag = q
-      manual = true
+      setManual()
     }
     const onUp = () => { drag = null }
-    const onDbl = () => { manual = false }
+    const onDbl = () => { manual.current = false; p.current.onMoved(false) }
     canvas.addEventListener('wheel', onWheel, { passive: false })
     canvas.addEventListener('mousedown', onDown)
     window.addEventListener('mousemove', onMove)

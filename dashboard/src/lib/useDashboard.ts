@@ -1,18 +1,21 @@
-// All dashboard state in one place: the live event stream, polled heat map,
-// trail, alerts, summary, and replay (`until`). Designs only render it.
+// All dashboard state in one place: the live event stream (one or more wearers),
+// polled heat map, trail, alerts, summary, and replay (`until`). Designs only render it.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { Alert, DataSource, HeatCell, LiveEvent, MapMeta, Pose, Summary, TrailPoint } from './types'
+import { DEFAULT_WEARER } from './types'
 
-export type Dashboard = {
+type Wearer = { pose: Pose | null; voc: number | null; window: [number, number][] } // window: [ms, voc], last 60 s
+
+type State = {
   kind: DataSource['kind']
   connected: boolean
   bridge: boolean
   session: string
   started: number | null
   threshold: number
-  pose: Pose | null
-  voc: number | null
-  window: [number, number][] // [ms, voc], last 60 s
+  crew: string[] // wearer ids, in order of appearance
+  wearers: Record<string, Wearer>
+  selected: string | null
   meta: MapMeta | null
   image: CanvasImageSource | null
   alerts: Alert[]
@@ -24,28 +27,45 @@ export type Dashboard = {
   summaryLoading: boolean
 }
 
+/** What designs render: State plus the selected wearer's pose/reading, and every wearer's pose. */
+export type Dashboard = State & {
+  pose: Pose | null
+  voc: number | null
+  window: [number, number][]
+  poses: { id: string; pose: Pose }[]
+}
+
 const WINDOW_MS = 60_000
-const MAX_POINTS = 20_000
+const MAX_POINTS = 30_000
 const cap = <T,>(a: T[]) => (a.length > MAX_POINTS ? a.slice(-MAX_POINTS) : a)
+const empty = (): Wearer => ({ pose: null, voc: null, window: [] })
+
+function withWearer(p: State, id: string, f: (w: Wearer) => Wearer): State {
+  const crew = p.crew.includes(id) ? p.crew : [...p.crew, id]
+  return { ...p, crew, selected: p.selected ?? id, wearers: { ...p.wearers, [id]: f(p.wearers[id] ?? empty()) } }
+}
 
 export function useDashboard(source: DataSource) {
-  const [s, set] = useState<Dashboard>({
+  const [s, set] = useState<State>({
     kind: source.kind, connected: false, bridge: false, session: '', started: null, threshold: 250,
-    pose: null, voc: null, window: [], meta: null, image: null, alerts: [], heat: [], trail: [], history: [],
+    crew: [], wearers: {}, selected: null, meta: null, image: null, alerts: [], heat: [], trail: [], history: [],
     until: null, summary: null, summaryLoading: false,
   })
   const untilRef = useRef<number | null>(null)
-  untilRef.current = s.until
+  useEffect(() => { untilRef.current = s.until }, [s.until])
 
   // live stream
   useEffect(() => {
     let mapBusy = false
     const onEvent = (e: LiveEvent) => {
       switch (e.t) {
-        case 'hello':
-          set((p) => ({ ...p, session: e.session, started: Date.parse(e.started), threshold: e.threshold,
-                        bridge: e.bridge_connected, window: e.voc_window.map(([t, v]) => [t * 1000, v]) }))
+        case 'hello': {
+          const id = e.wearers?.[0] ?? DEFAULT_WEARER
+          set((p) => withWearer({ ...p, session: e.session, started: Date.parse(e.started), threshold: e.threshold,
+                                  bridge: e.bridge_connected, crew: e.wearers ?? p.crew },
+                                id, (w) => ({ ...w, window: e.voc_window.map(([t, v]) => [t * 1000, v]) })))
           break
+        }
         case 'map':
           set((p) => ({ ...p, meta: e }))
           if (mapBusy) break
@@ -54,14 +74,16 @@ export function useDashboard(source: DataSource) {
             .catch(() => {}).finally(() => { mapBusy = false })
           break
         case 'pose':
-          set((p) => ({ ...p, pose: e }))
+          set((p) => withWearer(p, e.wearer ?? DEFAULT_WEARER, (w) => ({ ...w, pose: e })))
           break
         case 'voc': {
           const t = Date.parse(e.ts)
-          const pt: TrailPoint = { ts: e.ts, x: e.x, y: e.y, heading: null, voc: e.voc }
+          const id = e.wearer ?? DEFAULT_WEARER
+          const pt: TrailPoint = { ts: e.ts, x: e.x, y: e.y, heading: null, voc: e.voc, wearer: id }
           set((p) => ({
-            ...p, voc: e.voc,
-            window: [...p.window.filter(([wt]) => wt > t - WINDOW_MS), [t, e.voc] as [number, number]],
+            ...withWearer(p, id, (w) => ({
+              ...w, voc: e.voc, window: [...w.window.filter(([wt]) => wt > t - WINDOW_MS), [t, e.voc] as [number, number]],
+            })),
             trail: p.until == null ? cap([...p.trail, pt]) : p.trail,
             history: cap([...p.history, pt]),
           }))
@@ -104,6 +126,7 @@ export function useDashboard(source: DataSource) {
   }, [source, s.session, s.until])
 
   const setUntil = useCallback((until: number | null) => {
+    untilRef.current = until
     set((p) => ({ ...p, until }))
     if (until == null) source.trail(null).then((trail) => set((p) => ({ ...p, trail }))).catch(() => {})
   }, [source])
@@ -115,15 +138,30 @@ export function useDashboard(source: DataSource) {
       .catch(() => set((p) => ({ ...p, summaryLoading: false })))
   }, [source])
 
-  // In replay the wearer and reading come from the trail at `until`.
-  const replayPoint = s.until != null ? s.trail.at(-1) ?? null : null
-  const prev = s.trail.at(-2)
-  const replayHeading = replayPoint && prev ? Math.atan2(replayPoint.y - prev.y, replayPoint.x - prev.x) : 0
-  const view = {
+  const select = useCallback((id: string) => set((p) => ({ ...p, selected: id })), [])
+
+  // Poses: live, or in replay each wearer's last trail point at `until` (heading from the step before).
+  const poses: { id: string; pose: Pose }[] = []
+  for (const id of s.crew) {
+    if (s.until == null) {
+      const pose = s.wearers[id]?.pose
+      if (pose) poses.push({ id, pose })
+      continue
+    }
+    const mine = s.trail.filter((t) => (t.wearer ?? DEFAULT_WEARER) === id)
+    const last = mine.at(-1), prev = mine.at(-2)
+    if (last) poses.push({ id, pose: { ...last, heading: prev ? Math.atan2(last.y - prev.y, last.x - prev.x) : 0, wearer: id } })
+  }
+  const sel = s.selected ?? s.crew[0] ?? DEFAULT_WEARER
+  const selPose = poses.find((p) => p.id === sel)?.pose ?? null
+  const view: Dashboard = {
     ...s,
-    pose: replayPoint ? { ...replayPoint, heading: replayHeading } : s.pose,
-    voc: replayPoint ? replayPoint.voc : s.voc,
+    selected: sel,
+    poses,
+    pose: selPose,
+    voc: s.until != null ? selPose?.voc ?? null : s.wearers[sel]?.voc ?? null,
+    window: s.wearers[sel]?.window ?? [],
     alerts: s.until != null ? s.alerts.filter((a) => Date.parse(a.ts) <= s.until!) : s.alerts,
   }
-  return { s: view, setUntil, loadSummary }
+  return { s: view, setUntil, loadSummary, select }
 }
