@@ -62,7 +62,7 @@ async def set_session(req: Request, body: SessionBody):
     a = req.app.state
     a.live.new_session(body.session.strip())
     a.alerts.reset()
-    a.bus.publish(a.live.hello_event(a.alerts.threshold))
+    a.bus.publish(a.live.hello_event(a.alerts.threshold, a.settings.voc_unit))
     return {"session": a.live.session}
 
 
@@ -139,7 +139,7 @@ async def ws_live(ws: WebSocket, session: str | None = None):
     await ws.accept()
     q = a.bus.subscribe()
     try:
-        await ws.send_json(a.live.hello_event(a.alerts.threshold))
+        await ws.send_json(a.live.hello_event(a.alerts.threshold, a.settings.voc_unit))
         if a.live.map:
             await ws.send_json(a.live.map.event())
         pe = a.live.pose_event()

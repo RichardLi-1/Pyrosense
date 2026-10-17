@@ -15,8 +15,10 @@ def test_heat_png_renders():
 
 def test_fallback_text_mentions_location():
     s = fallback_text({"n": 10, "cells": 3, "mean": 120.0, "peak": 410.0},
-                      [{"cx": 20, "cy": -5, "mean": 390.0, "n": 4}])
+                      [{"cx": 20, "cy": -5, "mean": 390.0, "n": 4}], unit="index")
     assert "(4.1, -0.9)" in s and "alert-level" in s
+    s = fallback_text({"n": 10, "cells": 3, "mean": 120.0, "peak": 2500.0}, [{"cx": 0, "cy": 0, "mean": 2400.0, "n": 4}])
+    assert "ppb" in s and "alert-level" in s and "(good)" in s
 
 
 async def test_summarizer_without_key_uses_fallback_and_caches():
@@ -59,6 +61,11 @@ def with_fake(models):
 @pytest.mark.parametrize("v,name", [(0, "good"), (99.9, "good"), (100, "moderate"), (250, "poor"),
                                     (399, "poor"), (400, "alert-level")])
 def test_level_boundaries(v, name):
+    assert level(v, "index") == name
+
+
+@pytest.mark.parametrize("v,name", [(0, "good"), (219, "good"), (220, "moderate"), (660, "poor"), (2200, "alert-level")])
+def test_level_boundaries_ppb(v, name):
     assert level(v) == name
 
 
@@ -68,7 +75,7 @@ def test_fallback_without_readings():
 
 def test_heat_png_size_and_orientation():
     cells = [{"cx": 0, "cy": 0, "mean": 500, "weight": 1}, {"cx": 0, "cy": 1, "mean": 250, "weight": 1}]
-    img = np.array(Image.open(io.BytesIO(render_heat_png(cells, px_per_cell=1))))
+    img = np.array(Image.open(io.BytesIO(render_heat_png(cells, scale_max=500.0, px_per_cell=1))))
     assert img.shape == (4, 3, 4)                        # 1 x 2 cells + 1-cell border
     assert tuple(img[2, 1, :3]) == (0xEF, 0x23, 0x3C)    # cy=0 (hot) is the lower cell: north-up
     assert tuple(img[1, 1, :3]) == (0xFF, 0xD1, 0x66)    # cy=1 above it

@@ -140,9 +140,9 @@ class LiveState:
         return {"t": "pose", "ts": self.pose.ts.isoformat(), "x": self.pose.x, "y": self.pose.y,
                 "heading": self.pose.heading, "voc": self.voc}
 
-    def hello_event(self, threshold: float) -> dict[str, Any]:
+    def hello_event(self, threshold: float, unit: str = "ppb") -> dict[str, Any]:
         return {"t": "hello", "session": self.session, "started": self.started_at.isoformat(),
-                "threshold": threshold, "bridge_connected": self.bridge_connected,
+                "threshold": threshold, "unit": unit, "bridge_connected": self.bridge_connected,
                 "n_samples": self.n_samples,
                 "voc_window": [[round(t, 3), v] for t, v in self.voc_window]}
 

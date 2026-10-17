@@ -48,7 +48,7 @@ ROS-specific is installed on the backend host.
 
 | `t` | Fields | When |
 |---|---|---|
-| `hello` | `session, started, threshold, bridge_connected, n_samples, voc_window[[t,voc]…]` | on connect, on session change |
+| `hello` | `session, started, threshold, unit, bridge_connected, n_samples, voc_window[[t,voc]…]` | on connect, on session change |
 | `map` | `url, version, origin[x,y], res, w, h, y_up, free_area_m2, ts` | every `/map` message (≈1 Hz) |
 | `pose` | `ts, x, y, heading, voc` | ≤10 Hz |
 | `voc` | `ts, voc, n_new, x, y` | each new `/voc_points` sample |
@@ -73,6 +73,14 @@ ROS-specific is installed on the backend host.
 | `GET /health` | bridge/db/ws status |
 
 Timestamps accept ISO‑8601 or unix seconds. `session` defaults to the live session.
+
+## VOC units
+
+The sensor on the rig is an **SGP30**, which reports TVOC in **ppb** (not the SGP40 0-500 index).
+`VOC_UNIT=ppb` (default) selects the ppb bands: <220 good · 220-660 moderate · 660-2200 poor · >2200 alert,
+`VOC_THRESHOLD` defaults to 2200, and the summary/heat scale run 0-3000. Set `VOC_UNIT=index` and
+`VOC_THRESHOLD=250` for an SGP40. The `hello` event on `/ws/live` carries `unit` and `threshold` so the
+dashboard can pick its colour scale from it.
 
 ## Behaviour under failure
 

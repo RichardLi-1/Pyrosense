@@ -8,7 +8,7 @@ def test_defaults(monkeypatch):
         monkeypatch.delenv(k, raising=False)
     s = Settings()
     assert s.bridge_url == "ws://localhost:8765" and s.database_url is None and s.gemini_api_key is None
-    assert s.voc_threshold == 250.0 and s.live_pose_hz == 10.0
+    assert s.voc_threshold == 2200.0 and s.voc_unit == "ppb" and s.live_pose_hz == 10.0
     assert re.fullmatch(r"live-\d{8}-\d{4}", s.session)
 
 

@@ -120,7 +120,7 @@ def test_ws_live_sends_snapshot_then_stream():
     with TestClient(app) as client:
         with client.websocket_connect("/ws/live") as ws:
             hello = ws.receive_json()
-            assert hello["t"] == "hello" and hello["threshold"] == 250.0 and hello["session"] == "test"
+            assert hello["t"] == "hello" and hello["threshold"] == 2200.0 and hello["unit"] == "ppb" and hello["session"] == "test"
             client.portal.call(feed, app, "/pose", POSE, encode_pose(1.0, 2.0, 0.0))
             assert ws.receive_json()["t"] == "pose"
         client.portal.call(feed, app, "/map", GRID, encode_map(np.zeros((2, 2), np.int8)))

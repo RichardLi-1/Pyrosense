@@ -33,7 +33,8 @@ def create_app(settings: Settings | None = None, *, connect_bridge: bool = True)
         st.db = Database(settings.database_url, flush_seconds=settings.db_flush_seconds,
                          max_buffer_rows=settings.db_max_buffer_rows)
         st.alerts = AlertEngine(settings.voc_threshold, settings.voc_hold_seconds, settings.alert_cooldown_seconds)
-        st.summarizer = Summarizer(settings.gemini_api_key, settings.gemini_model, settings.summary_cache_seconds)
+        st.summarizer = Summarizer(settings.gemini_api_key, settings.gemini_model, settings.summary_cache_seconds,
+                                   unit=settings.voc_unit)
         st.ingest = Ingest(settings, st.live, st.db, st.bus, st.alerts)
         st.bridge = FoxgloveClient(settings.bridge_url, TOPICS, st.ingest.on_message)
         log.info("session=%s bridge=%s db=%s gemini=%s", settings.session, settings.bridge_url,
