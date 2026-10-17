@@ -1,5 +1,6 @@
 .env
-tiger-cloud-db-64912-credentials.envbackend/.venv/
+backend/tiger-cloud-db-64912-credentials.env
+backend/.venv/
 __pycache__/
 *.pyc
 .pytest_cache/
