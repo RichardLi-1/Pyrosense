@@ -60,8 +60,7 @@ def setup(context, *args, **kwargs):
 
     actions = [
         LogInfo(msg=f"session={session} use_sim_time={use_sim_time} replay={replay} record={record}"),
-        static_tf("laser", "laser", frames["laser"]),
-        static_tf("voc_link", "voc_link", frames["voc_link"]),
+        *[static_tf(child, child, f) for child, f in frames.items()],
 
         Node(package="rplidar_ros", executable="rplidar_node", name="rplidar_node",
              parameters=[cfg("rplidar_c1.yaml"), sim], output="screen"),
