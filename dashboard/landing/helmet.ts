@@ -15,9 +15,13 @@ export class Helmet {
   readonly camera = new THREE.PerspectiveCamera(30, 1, 0.1, 50)
   /** Callout anchors in model space: [lidar, pi, sensor]. */
   readonly anchors = [new THREE.Object3D(), new THREE.Object3D(), new THREE.Object3D()]
-  private rig = new THREE.Group()
+  /** The whole hat (model + tilt). Lives in `scene` for the spin, in the world during the landing. */
+  readonly rig = new THREE.Group()
+  private worldLights = new THREE.Group()
   private model = new THREE.Group()
   private slot: THREE.Mesh | null = null
+  /** Height of the fitted model at rig scale 1 (for screen-space sizing). */
+  fitHeight = 1
   private disposables: { dispose(): void }[] = []
   private tmp = new THREE.Vector3()
   private tmp2 = new THREE.Vector3()
@@ -34,6 +38,12 @@ export class Helmet {
     this.scene.add(key, rim, fill, this.rig)
     this.rig.add(this.model)
     this.rig.rotation.x = 0.08
+    // small key + rim that travel with the hat when it is placed in the world scene
+    const k = new THREE.PointLight(0xffffff, 3, 8, 2)
+    k.position.set(1.4, 2.2, 1.6)
+    const r = new THREE.PointLight(0xffffff, 3.5, 8, 2)
+    r.position.set(-1.2, 1.6, -1.8)
+    this.worldLights.add(k, r)
     for (const a of this.anchors) this.model.add(a)
     this.buildProcedural()
     void this.tryLoadScan()
@@ -87,6 +97,7 @@ export class Helmet {
     const s = FIT_RADIUS / radius
     this.model.scale.setScalar(s)
     this.model.position.set(-centre.x * s, -centre.y * s, -centre.z * s)
+    this.fitHeight = size.y * s
   }
 
   private async tryLoadScan() {
@@ -122,6 +133,34 @@ export class Helmet {
     } catch {
       // keep the procedural helmet
     }
+  }
+
+  /** Move the hat into the world scene at real size (longest dimension ≈ 2·scale metres). */
+  toWorld(scene: THREE.Scene) {
+    if (this.rig.parent !== scene) {
+      scene.add(this.rig)
+      this.rig.add(this.worldLights)
+    }
+  }
+
+  /** Put the hat back on its turntable. */
+  toSpin() {
+    if (this.rig.parent === this.scene) return
+    this.scene.add(this.rig)
+    this.rig.remove(this.worldLights)
+    this.rig.scale.setScalar(1)
+    this.rig.rotation.set(0.08, 0, 0)
+  }
+
+  /** Fade the whole hat (used when the camera passes through the firefighter's head). */
+  setOpacity(a: number) {
+    this.rig.visible = a > 0.01
+    this.model.traverse((o) => {
+      const mesh = o as THREE.Mesh
+      if (!mesh.isMesh) return
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      for (const m of mats) { m.transparent = a < 0.999; m.opacity = a }
+    })
   }
 
   update(angle: number, t: number) {

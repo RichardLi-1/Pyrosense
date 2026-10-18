@@ -94,16 +94,12 @@ export const POST_F = /* glsl */ `
 precision highp float;
 uniform sampler2D tScene, tHud;
 uniform vec2 uRes, uGrid;
-uniform float uCell, uTime, uBlock, uSmoke, uNoise, uNoiseT, uHeat, uAlert, uVig, uDim, uMono, uLensOn;
-uniform vec4 uLens, uShade1, uShade2;
-uniform float uShadeK, uLensGap;
+uniform float uCell, uTime, uBlock, uSmoke, uNoise, uNoiseT, uHeat, uAlert, uVig, uDim, uMono;
+uniform vec4 uShade1, uShade2;
+uniform float uShadeK;
 uniform vec3 uBg;
 varying vec2 vUv;
 ${NOISE}
-float sdRoundBox(vec2 p, vec2 b, float r) {
-  vec2 q = abs(p) - b + r;
-  return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
-}
 float shade(vec4 r, vec2 px) {
   if (r.z <= 0.0) return 0.0;
   vec2 d = max(r.xy - px, px - (r.xy + r.zw));
@@ -143,30 +139,13 @@ void main() {
   vec2 nd = (px / uRes - 0.5) * vec2(uRes.x / uRes.y, 1.0);
   temp *= 1.0 - uVig * smoothstep(0.5, 1.05, length(nd));
 
-  // headset: two lens cut-outs, body outline drawn as cells
-  float inside = 1.0, outline = 0.0;
-  if (uLensOn > 0.5) {
-    vec2 hp = (px - uLens.xy) / uLens.z;
-    float dL = sdRoundBox(hp - vec2(-uLensGap, 0.0), vec2(0.40, 0.30), 0.18);
-    float dR = sdRoundBox(hp - vec2(uLensGap, 0.0), vec2(0.40, 0.30), 0.18);
-    float dLens = min(dL, dR);
-    float dBody = sdRoundBox(hp, vec2(1.06, 0.5), 0.3);
-    float w = uCell / uLens.z;
-    inside = step(dLens, 0.0);
-    outline = clamp(step(abs(dBody), w * 0.6) + step(abs(dLens), w * 0.6), 0.0, 1.0) * uLens.w;
-  }
-
   vec4 h = texture2D(tHud, (cellId + 0.5) / uGrid);
   float aa = 0.9 / uCell;
   vec3 col = palette(temp);
   float r = mix(0.1, 0.46, smoothstep(0.03, 0.75, temp));
   float sq = smoothstep(0.7, 1.0, temp) * (1.0 - uMono);
   float dd = mix(length(local), max(abs(local.x), abs(local.y)), sq);
-  float a = (1.0 - smoothstep(r - aa, r + aa, dd)) * step(0.045, temp) * inside;
-  // headset outline cells
-  float ao = (1.0 - smoothstep(0.4 - aa, 0.4 + aa, length(local))) * outline;
-  col = mix(col, vec3(0.933, 0.945, 0.965), ao);
-  a = max(a, ao);
+  float a = (1.0 - smoothstep(r - aa, r + aa, dd)) * step(0.045, temp);
   // hud cells (lungs, glyphs, leaders)
   float rh = mix(0.2, 0.46, h.a);
   float ah = (1.0 - smoothstep(rh - aa, rh + aa, length(local))) * step(0.03, h.a);

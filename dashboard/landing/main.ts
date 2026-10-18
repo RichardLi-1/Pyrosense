@@ -5,6 +5,7 @@ import { Hud } from './hud'
 import { Mock } from './mock'
 import { Post } from './post'
 import { World } from './world'
+import { createOdometer } from './odometer'
 import { T, cellPx, clamp, isMobile, lerp, levelOf, reducedMotion, span, vocAt, win } from './util'
 
 const $ = <E extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as E
@@ -31,7 +32,7 @@ const mock = new Mock($('laptop'))
 // ---- dom --------------------------------------------------------------------
 const el = {
   intro: $('intro'), product: $('product'), hud: $('hud'), hudVoc: $('hudVoc'), hudLevel: $('hudLevel'),
-  hudTime: $('hudTime'), hudPos: $('hudPos'), warn: $('warn'), problemH: document.querySelector<HTMLElement>('.problem-h')!,
+  hudTime: $('hudTime'), hudPos: $('hudPos'), warn: $('warn'), warnVoc: $('warnVoc'), warnLevel: $('warnLevel'), problemH: document.querySelector<HTMLElement>('.problem-h')!,
   problemS: document.querySelector<HTMLElement>('.problem-s')!, end: $('end'), laptop: $('laptop'), cta: $('cta'), foot: $('foot'),
   callouts: Array.from(document.querySelectorAll<HTMLElement>('.callout')),
   hints: Array.from(document.querySelectorAll<HTMLElement>('.hint')),
@@ -60,9 +61,17 @@ let stacked = false
 let ctaRect = new DOMRect()
 let footRect = new DOMRect()
 let calloutRects: DOMRect[] = []
+/** Real size of the hat in the world (longest dimension ≈ 0.33 m) and the camera distance at
+ *  which it has the same on-screen size as at the end of the spin. */
+const HAT_SCALE = 0.165
+let hatD0 = 0.4
+let hatHero = 0.4
 let hintRects: DOMRect[] = []
 let problemRect = new DOMRect()
 let warnRect = new DOMRect()
+let introRect = new DOMRect()
+let shownVoc = -1
+const warnOdo = createOdometer(el.warnVoc, 4, !reducedMotion)
 const shadeFrom = (v: THREE.Vector4, r: { left: number; bottom: number; width: number; height: number } | null, pad = 24) => {
   if (!r || r.width <= 0) { v.set(0, 0, 0, 0); return }
   v.set((r.left - pad) * dpr, (H - r.bottom - pad) * dpr, (r.width + 2 * pad) * dpr, (r.height + 2 * pad) * dpr)
@@ -85,6 +94,10 @@ function resize() {
   helmet.camera.position.set(0, 1.25 * k, 5.1 * k)
   helmet.camera.lookAt(0, -0.02, 0)
   helmet.camera.updateProjectionMatrix()
+  // the world camera is at 30° (the spin lens) at the handoff, so same distance ratio = same picture
+  const spinDist = Math.hypot(1.25 * k, 5.1 * k)
+  hatD0 = spinDist * HAT_SCALE
+  hatHero = helmet.fitHeight / (2 * spinDist * Math.tan((helmet.camera.fov * Math.PI) / 360))
   post.uniforms.uRes.value.set(W * dpr, H * dpr)
   post.uniforms.uGrid.value.set(gw, gh)
   post.uniforms.uCell.value = cell * dpr
@@ -135,6 +148,9 @@ function resize() {
   const ph = el.problemH.getBoundingClientRect(), ps = el.problemS.getBoundingClientRect()
   problemRect = new DOMRect(Math.min(ph.left, ps.left), ph.top, Math.max(ph.width, ps.width), ps.bottom - ph.top)
   warnRect = el.warn.children[1].getBoundingClientRect()
+  const ti = el.intro.children[0].getBoundingClientRect(), tg = el.intro.children[1].getBoundingClientRect()
+  introRect = new DOMRect(Math.min(ti.left, tg.left), ti.top, Math.max(ti.width, tg.width), tg.bottom - ti.top)
+  world.setPortrait(W < H)
 }
 
 // ---- scroll -----------------------------------------------------------------
@@ -157,45 +173,21 @@ function render(p: number, t: number, dt: number) {
   const helmetBeat = p >= T.helmet[0] && p < T.helmet[1]
   const exterior = p >= T.cut
   const lungsW = win(p, T.lungs[0], T.lungs[1], 0.03, 0.03)
-  const inHeadset = span(p, T.headsetIn[1] - 0.01, T.headsetIn[1]) * (1 - span(p, T.lift[0], T.lift[0] + 0.01))
-
-  // headset: approaches, lenses fill the view; later shrinks back and drops away
-  let lensOn = 0, outlineA = 0, widthPx = 0, lensGap = 0.5
-  const cx = W / 2
-  let cy = H / 2
-  const baseW = mobile ? W * 0.82 : Math.min(W * 0.46, H * 0.9)
-  if (p < T.headsetIn[1]) {
-    const approach = span(p, 0, T.headsetIn[0])
-    const rush = Math.pow(span(p, T.headsetIn[0], T.headsetIn[1]), 2.6)
-    widthPx = lerp(baseW * 0.72, baseW, approach) * (1 + rush * 22)
-    lensGap = lerp(0.5, 0.2, Math.sqrt(rush))
-    cy = lerp(H * 0.64, H / 2, span(p, T.headsetIn[0], T.headsetIn[0] + 0.02))
-    outlineA = Math.min(1, t / 1.4) * (1 - span(p, T.headsetIn[0] + 0.015, T.headsetIn[1] - 0.005))
-    lensOn = 1
-  } else if (p >= T.lift[0] && p < T.cut) {
-    const a = span(p, T.lift[0], T.lift[0] + 0.016)
-    const b = span(p, T.lift[0] + 0.016, T.cut)
-    widthPx = lerp(baseW * 23, baseW, a) * lerp(1, 0.75, b)
-    lensGap = lerp(0.2, 0.5, a * a)
-    cy = H / 2 + b * b * H
-    outlineA = a * (1 - span(p, T.cut - 0.006, T.cut))
-    lensOn = 1
-  }
-  u.uLensOn.value = lensOn
-  u.uLensGap.value = lensGap
-  u.uLens.value.set(cx * dpr, (H - cy) * dpr, (widthPx / 2.12) * dpr, outlineA)
+  const inView = span(p, T.pov - 0.01, T.pov + 0.012) * (1 - span(p, T.lift[0], T.lift[0] + 0.01))
+  const introA = 1 - span(p, T.intro[0], T.intro[1])
 
   // cell look
+  // the hat resolves out of the night grain; the cooling scene resolves after the cut
   let block = 1
-  if (p < 0.1) block = p < 0.05 ? 4 : p < 0.07 ? 3 : p < 0.095 ? 2 : 1
+  if (helmetBeat) block = p < T.helmet[0] + 0.012 ? 3 : p < T.helmet[0] + 0.024 ? 2 : 1
   else if (exterior) block = p < T.cut + 0.018 ? 3 : p < T.cut + 0.036 ? 2 : 1
   u.uBlock.value = block
   let dim = 1
-  if (helmetBeat) dim = span(p, T.helmet[0], T.helmet[0] + 0.018) * (1 - span(p, T.helmet[1] - 0.016, T.helmet[1]))
-  else if (p < T.helmet[0]) dim = 1 - span(p, T.helmet[0] - 0.012, T.helmet[0])
-  else if (!exterior) dim = span(p, T.helmet[1], T.helmet[1] + 0.02) * (1 - 0.88 * lungsW)
+  if (helmetBeat) dim = span(p, T.helmet[0], T.helmet[0] + 0.018)
+  else if (p < T.helmet[0]) dim = 1 - span(p, T.helmet[0] - 0.01, T.helmet[0])
+  else if (!exterior) dim = 1 - 0.88 * lungsW
   u.uDim.value = dim
-  u.uMono.value = helmetBeat ? 1 : 0
+  u.uMono.value = helmetBeat ? 1 : 1 - span(p, 0.246, 0.262)
   const smokeIn = span(p, 0.37, T.lift[0]) * 0.5 + span(p, T.lift[0], T.cut) * 0.5
   u.uSmoke.value = exterior ? 1 - span(p, T.cut, T.cut + 0.06) : smokeIn * (1 - lungsW)
   u.uNoise.value = helmetBeat ? 0.03 : exterior ? 0.04 : 0.05 + 0.1 * span(p, 0.37, 0.78)
@@ -204,7 +196,7 @@ function render(p: number, t: number, dt: number) {
   const warnW = win(p, T.warn[0] - 0.004, T.warn[1] + 0.01, 0.004, 0.03)
   const pulse = reducedMotion ? 0.75 : 0.55 + 0.45 * Math.pow(Math.sin(t * 7), 2)
   u.uAlert.value = warnW * pulse
-  u.uVig.value = (helmetBeat ? 0.2 : 0.35) * inHeadset
+  u.uVig.value = exterior ? 0 : (helmetBeat ? 0.15 : 0.3) * (1 - span(p, T.lift[0], T.cut))
   u.uTime.value = t
 
   // shake grows with the fire; the warning kicks it
@@ -214,6 +206,17 @@ function render(p: number, t: number, dt: number) {
   // temperature pass
   renderer.setRenderTarget(rt)
   const angle = span(p, T.helmetSpin[0], T.helmetSpin[1]) * Math.PI * 2
+  // the same helmet object: on its turntable during the spin, in the world while it lands
+  const hatInWorld = p >= T.helmet[1] && p < T.pov + 0.002
+  if (hatInWorld) {
+    helmet.toWorld(world.scene)
+    world.hat = { rig: helmet.rig, d0: hatD0, scale: HAT_SCALE, fitH: helmet.fitHeight, heroFrac: hatHero, setOpacity: (a) => helmet.setOpacity(a) }
+  } else {
+    helmet.toSpin()
+    helmet.setOpacity(1)
+    world.hat = null
+    helmet.rig.visible = helmetBeat
+  }
   if (helmetBeat) {
     helmet.update(angle, t)
     renderer.render(helmet.scene, helmet.camera)
@@ -262,6 +265,7 @@ function render(p: number, t: number, dt: number) {
   if (warnW > 0.01) { shadeK = warnW * 0.7; shadeFrom(u.uShade1.value, warnRect, 40) }
   if (lungsW > 0.01) { shadeK = Math.max(shadeK, lungsW); shadeFrom(u.uShade1.value, problemRect) }
   if (exterior) { shadeK = 1; shadeFrom(u.uShade1.value, ctaRect, 28); shadeFrom(u.uShade2.value, footRect, 16) }
+  if (introA > 0.01 && !helmetBeat) { shadeK = 0.85 * introA; shadeFrom(u.uShade1.value, introRect, 28) }
   u.uShadeK.value = shadeK
   hud.warnRing(warnW, t, reducedMotion)
   const lungsA = win(p, T.lungs[0], T.lungs[1], 0.02, 0.02)
@@ -277,14 +281,23 @@ function render(p: number, t: number, dt: number) {
   post.render(renderer)
 
   // ---- dom
-  const introOut = span(p, T.headsetIn[0], T.headsetIn[0] + 0.03)
-  fx(el.intro, 1 - introOut, `translateY(${(-introOut * 30).toFixed(1)}px)`)
+  fx(el.intro, introA, `translateY(${(-(1 - introA) * 30).toFixed(1)}px)`)
   fx(el.product, productA)
   el.callouts.forEach((c, i) => fx(c, calloutVis[i] * productA, `translateY(${((1 - calloutVis[i]) * 8).toFixed(1)}px)`))
-  const hudA = inHeadset * (1 - 0.6 * lungsW) * (helmetBeat ? 0 : span(p, T.helmet[1], T.helmet[1] + 0.02))
+  const hudA = inView * (1 - 0.6 * lungsW)
   fx(el.hud, hudA)
+  // the reading eases toward the scroll target (never jumps); the warning rolls it like an odometer
+  shownVoc = shownVoc < 0 || reducedMotion ? vocAt(p) : shownVoc + (vocAt(p) - shownVoc) * (1 - Math.exp(-dt * 2.5))
+  const noise = reducedMotion ? 0 : Math.round(2 * Math.sin(Math.floor(t * 4) * 2.3)) // HUD only: a live sensor
+  const live = Math.max(0, Math.round(shownVoc) + noise)
+  if (warnW > 0.01) {
+    const [wname, wcolor] = levelOf(Math.round(shownVoc))
+    warnOdo(shownVoc, dt)
+    txt(el.warnLevel, wname)
+    el.warnLevel.style.setProperty('color', wcolor)
+  }
   if (hudA > 0) {
-    const v = vocAt(p)
+    const v = live
     const [name, color] = levelOf(v)
     txt(el.hudVoc, String(v))
     txt(el.hudLevel, name)
@@ -294,7 +307,7 @@ function render(p: number, t: number, dt: number) {
     const walked = clamp((p - T.door) / (T.lift[0] - T.door)) * 15
     txt(el.hudPos, `${walked.toFixed(1)} m`)
   }
-  fx(el.warn, warnW, `scale(${(1 + 0.1 * (1 - span(p, T.warn[0], T.warn[0] + 0.006))).toFixed(3)})`)
+  fx(el.warn, warnW, `scale(${(1 + 0.04 * (1 - span(p, T.warn[0], T.warn[0] + 0.01))).toFixed(3)})`)
   const ph = win(p, T.lungs[0] + 0.03, T.lungs[1] - 0.004, 0.02, 0.015)
   const ps = win(p, T.lungs[0] + 0.042, T.lungs[1] - 0.004, 0.02, 0.015)
   fx(el.problemH, ph, `translateY(${((1 - ph) * 10).toFixed(1)}px)`)

@@ -28,10 +28,12 @@ export function rng(seed: number) {
 
 /** Scroll timeline (progress 0..1). Total page = 10.5 viewport heights. */
 export const T = {
-  headsetIn: [0.03, 0.078],
-  helmet: [0.082, 0.228],
-  helmetSpin: [0.1, 0.212],
-  outside: [0.228, 0.335],
+  intro: [0.03, 0.068],
+  helmet: [0.075, 0.225],
+  helmetSpin: [0.09, 0.21],
+  outside: [0.225, 0.335],
+  hatLand: [0.245, 0.268],
+  pov: 0.315,
   door: 0.335,
   warn: [0.428, 0.487],
   warnImpulse: 0.431,
@@ -63,8 +65,8 @@ export const COLORS = {
 
 export function vocAt(p: number) {
   const k: [number, number][] = [
-    [0.23, 38], [0.335, 52], [0.37, 86], [0.41, 150], [0.428, 412], [0.49, 404],
-    [0.61, 356], [0.72, 312], [0.79, 290],
+    [0.23, 110], [0.335, 130], [0.37, 260], [0.41, 700], [0.428, 1400], [0.446, 2410], [0.487, 2600],
+    [0.61, 2300], [0.72, 1900], [0.79, 1700],
   ]
   if (p <= k[0][0]) return k[0][1]
   for (let i = 0; i < k.length - 1; i++) {
@@ -73,8 +75,8 @@ export function vocAt(p: number) {
   return k[k.length - 1][1]
 }
 export function levelOf(v: number): [string, string] {
-  if (v < 60) return ['Good', COLORS.good]
-  if (v < 150) return ['Moderate', COLORS.moderate]
-  if (v < 300) return ['Poor', COLORS.poor]
+  if (v < 220) return ['Good', COLORS.good]
+  if (v < 660) return ['Moderate', COLORS.moderate]
+  if (v < 2200) return ['Poor', COLORS.poor]
   return ['Hazardous', COLORS.alert]
 }

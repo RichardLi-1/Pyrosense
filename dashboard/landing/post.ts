@@ -19,12 +19,9 @@ export class Post {
     uVig: { value: 0 },
     uDim: { value: 1 },
     uMono: { value: 0 },
-    uLensOn: { value: 0 },
-    uLens: { value: new THREE.Vector4(0, 0, 1, 0) },
     uShade1: { value: new THREE.Vector4(0, 0, 0, 0) },
     uShade2: { value: new THREE.Vector4(0, 0, 0, 0) },
     uShadeK: { value: 0 },
-    uLensGap: { value: 0.5 },
     uBg: { value: new THREE.Color(0x07090d) },
   }
   private scene = new THREE.Scene()

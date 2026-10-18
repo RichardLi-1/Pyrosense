@@ -1,96 +1,201 @@
-// A small, crisp mock of the real dashboard: floor plan with heat bands, hard-hat badges on
-// trails, predicted room (striped) with a likely-source ring, a VOC reading with sparkline,
-// and a replay timeline. All drawn procedurally.
-import { COLORS, clamp, lerp, smooth } from './util'
+// A crisp miniature of the real PyroSafe dashboard (Focus design): full-bleed dark map with
+// the floor plan centred, thermal ramp heat as crisp bands with contour lines, striped
+// predicted areas with "likely source" / "sample next" rings, thin per-firefighter trails,
+// hard-hat badges A/B/C; a left column with the big TVOC reading, level, sparkline, attitude,
+// exposure rows and crew chips; legend pill, view segment control and a live timeline.
+import { clamp, lerp } from './util'
 
 type Pt = [number, number]
+type RGB = [number, number, number]
 const frac = (v: number) => v - Math.floor(v)
 const tri = (v: number) => 1 - Math.abs(frac(v) * 2 - 1)
 
+// ---- scale + thermal ramp (mirrors src/lib/colors.ts, SGP30 ppb) ----------------------
+export const BANDS: [number, number, number] = [220, 660, 2200]
+export const MAX_PPB = 3000
+const STOPS: [number, RGB][] = [
+  [0.0, [10, 16, 48]], [0.16, [24, 50, 128]], [0.33, [47, 111, 224]], [0.46, [146, 188, 236]],
+  [0.55, [240, 170, 74]], [0.67, [226, 84, 32]], [0.78, [255, 138, 31]], [0.9, [255, 210, 60]], [1.0, [255, 247, 216]],
+]
+const SEG = [0, 0.33, 0.55, 0.78]
+export function rampT(v: number): number {
+  const edges = [0, ...BANDS, MAX_PPB], stops = [...SEG, 1]
+  if (v <= 0) return 0
+  for (let i = 0; i < 4; i++) if (v < edges[i + 1]) return stops[i] + ((v - edges[i]) / (edges[i + 1] - edges[i])) * (stops[i + 1] - stops[i])
+  return 1
+}
+export function rampColor(t: number): RGB {
+  const x = clamp(t)
+  for (let i = 1; i < STOPS.length; i++) {
+    const [b, cb] = STOPS[i], [a, ca] = STOPS[i - 1]
+    if (x <= b) { const f = (x - a) / (b - a); return [0, 1, 2].map((k) => Math.round(ca[k] + (cb[k] - ca[k]) * f)) as RGB }
+  }
+  return STOPS[STOPS.length - 1][1]
+}
+export const rampGradient = () => {
+  const parts: string[] = []
+  for (let i = 0; i <= 24; i++) parts.push(`rgb(${rampColor(i / 24).join(',')}) ${((i / 24) * 100).toFixed(1)}%`)
+  return `linear-gradient(to right, ${parts.join(', ')})`
+}
+const rgb = (c: RGB, a = 1) => `rgba(${c[0]},${c[1]},${c[2]},${a})`
+
+// ---- plan (100 x 64 units): rooms above and below a hallway ---------------------------
+const WALLS: Pt[][] = [
+  [[2, 2], [98, 2], [98, 62], [2, 62], [2, 2]],
+  [[26, 2], [26, 26]], [[50, 2], [50, 26]], [[74, 2], [74, 26]],
+  [[2, 26], [10, 26]], [[16, 26], [36, 26]], [[42, 26], [60, 26]], [[66, 26], [84, 26]], [[90, 26], [98, 26]],
+  [[2, 38], [12, 38]], [[18, 38], [30, 38]], [[36, 38], [48, 38]], [[54, 38], [70, 38]], [[76, 38], [98, 38]],
+  [[20, 38], [20, 62]], [[40, 38], [40, 62]], [[58, 38], [58, 62]],
+]
+const UNEXPLORED: Pt[][] = [[[80, 38], [80, 62]]]
+const PREDICTED_ROOM = [80, 38, 98, 62] // x0 y0 x1 y1
+const SAMPLE_NEXT: Pt = [62, 14]
+const SOURCE: Pt = [89, 51]
+const CREW = [
+  { color: '#ffffff', letter: 'A', r: 2.6, path: [[22, 32], [62, 32], [64, 36], [66, 44], [69, 52]] as Pt[], period: 26 },
+  { color: '#7dd3fc', letter: 'B', r: 1.8, path: [[8, 33], [50, 33]] as Pt[], period: 30, pingpong: true },
+  { color: '#c4b5fd', letter: 'C', r: 1.8, path: [[10, 31], [48, 31]] as Pt[], period: 34, pingpong: true },
+]
+const CREW_VALUES = [2410, 640, 180]
+
 function polyPoint(pts: Pt[], u: number): Pt {
-  const lens: number[] = []
+  const segLen: number[] = []
   let total = 0
-  for (let i = 1; i < pts.length; i++) { const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); lens.push(l); total += l }
+  for (let i = 1; i < pts.length; i++) { const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); segLen.push(l); total += l }
   let d = clamp(u) * total
-  for (let i = 0; i < lens.length; i++) {
-    if (d <= lens[i]) { const t = lens[i] ? d / lens[i] : 0; return [lerp(pts[i][0], pts[i + 1][0], t), lerp(pts[i][1], pts[i + 1][1], t)] }
-    d -= lens[i]
+  for (let i = 0; i < segLen.length; i++) {
+    if (d <= segLen[i]) { const t = segLen[i] ? d / segLen[i] : 0; return [lerp(pts[i][0], pts[i + 1][0], t), lerp(pts[i][1], pts[i + 1][1], t)] }
+    d -= segLen[i]
   }
   return pts[pts.length - 1]
 }
 function polyPrefix(pts: Pt[], u: number): Pt[] {
   const out: Pt[] = [pts[0]]
-  const lens: number[] = []
+  const segLen: number[] = []
   let total = 0
-  for (let i = 1; i < pts.length; i++) { const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); lens.push(l); total += l }
+  for (let i = 1; i < pts.length; i++) { const l = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]); segLen.push(l); total += l }
   let d = clamp(u) * total
-  for (let i = 0; i < lens.length; i++) {
-    if (d <= lens[i]) { const t = lens[i] ? d / lens[i] : 0; out.push([lerp(pts[i][0], pts[i + 1][0], t), lerp(pts[i][1], pts[i + 1][1], t)]); return out }
-    out.push(pts[i + 1]); d -= lens[i]
+  for (let i = 0; i < segLen.length; i++) {
+    if (d <= segLen[i]) { const t = segLen[i] ? d / segLen[i] : 0; out.push([lerp(pts[i][0], pts[i + 1][0], t), lerp(pts[i][1], pts[i + 1][1], t)]); return out }
+    out.push(pts[i + 1]); d -= segLen[i]
   }
   return out
 }
 
-// plan in a 100 x 64 unit space
-const WALLS: Pt[][] = [
-  [[4, 6], [96, 6], [96, 58], [4, 58], [4, 6]],
-  [[4, 26], [40, 26]], [[52, 26], [96, 26]],
-  [[4, 40], [30, 40]], [[42, 40], [96, 40]],
-  [[34, 6], [34, 26]], [[66, 6], [66, 26]],
-]
-const UNEXPLORED: Pt[][] = [[[50, 40], [50, 58]]]
-const CREW = [
-  { color: COLORS.alert, path: [[46, 16], [56, 11], [61, 19], [52, 22], [42, 18], [46, 16]] as Pt[], period: 14, label: 'FF-1' },
-  { color: COLORS.moderate, path: [[12, 33], [88, 33]] as Pt[], period: 18, label: 'FF-2', pingpong: true },
-  { color: COLORS.good, path: [[12, 48], [40, 47], [40, 53], [14, 53], [12, 48]] as Pt[], period: 20, label: 'FF-3' },
-]
+/** Gas field in ramp space (0..1) at plan coordinates. */
+function field(x: number, y: number) {
+  const g = (cx: number, cy: number, s: number, a: number) => a * Math.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * s * s))
+  let f = 0.07
+  f += 0.26 * Math.exp(-((y - 32) ** 2) / 50) * (x > 6 && x < 94 ? 1 : 0.4)
+  f += g(14, 14, 6, 0.24)
+  f += g(SAMPLE_NEXT[0], SAMPLE_NEXT[1], 5, 0.34)
+  f += g(69, 50, 7, 0.4)
+  f += g(SOURCE[0], SOURCE[1], 4.5, 0.95) + g(SOURCE[0], SOURCE[1], 9, 0.25)
+  return f
+}
+
+/** Hard-hat badge as in src/map/theme.ts. */
+function drawHardHat(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number, badge: string, icon: string) {
+  ctx.fillStyle = badge
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill()
+  ctx.fillStyle = icon
+  const base = cy + 0.22 * r
+  ctx.beginPath(); ctx.arc(cx, base, 0.5 * r, Math.PI, 0); ctx.closePath(); ctx.fill()
+  const bw = 0.76 * r, bh = 0.16 * r
+  ctx.beginPath(); ctx.roundRect(cx - bw, base - 0.02 * r, bw * 2, bh, bh / 2); ctx.fill()
+  ctx.fillStyle = badge
+  ctx.fillRect(cx - 0.07 * r, base - 0.5 * r, 0.14 * r, 0.42 * r)
+}
 
 export class Mock {
+  private root: HTMLElement
   private map: HTMLCanvasElement
   private spark: HTMLCanvasElement
   private voc: HTMLElement
-  private fill: HTMLElement
-  private handle: HTMLElement
+  private level: HTMLElement
   private now: HTMLElement
+  private heat: HTMLCanvasElement | null = null
   private lastVoc = ''
   private lastNow = ''
-  private root: HTMLElement
 
   constructor(root: HTMLElement) {
     this.root = root
     this.map = root.querySelector('#dashMap')!
     this.spark = root.querySelector('#dashSpark')!
     this.voc = root.querySelector('#dashVoc')!
-    this.fill = root.querySelector('#dashFill')!
-    this.handle = root.querySelector('#dashHandle')!
+    this.level = root.querySelector('#dashLevel')!
     this.now = root.querySelector('#dashNow')!
+    root.querySelector<HTMLElement>('.dash-ramp')!.style.background = rampGradient()
+    const lv = rgb(rampColor(rampT(2410)))
+    this.level.style.setProperty('--lv', lv)
+    root.querySelectorAll<HTMLElement>('.dash-crew span').forEach((chip, i) => {
+      chip.style.setProperty('--c', CREW[i].color)
+      chip.querySelector('em')!.textContent = String(CREW_VALUES[i])
+    })
   }
 
   /** Position the laptop screen (CSS px) and size the canvases. */
   layout(x: number, y: number, w: number, h: number, dpr: number) {
     const st = this.root.style
     st.left = `${x}px`; st.top = `${y}px`; st.width = `${w}px`; st.height = `${h}px`
-    const dash = this.root.querySelector<HTMLElement>('#dash')!
-    dash.style.setProperty('--u', `${w / 100}px`)
+    this.root.querySelector<HTMLElement>('#dash')!.style.setProperty('--u', `${w / 100}px`)
     for (const c of [this.map, this.spark]) {
       const r = c.getBoundingClientRect()
       const cw = Math.max(1, Math.round(r.width * dpr)), ch = Math.max(1, Math.round(r.height * dpr))
       if (c.width !== cw || c.height !== ch) { c.width = cw; c.height = ch }
     }
+    this.heat = null
   }
 
   update(t: number, reduced: boolean) {
     const tt = reduced ? 3 : t
     this.drawMap(tt)
     this.drawSpark(tt)
-    const u = 0.3 + 0.65 * frac(tt / 40)
-    this.fill.style.width = `${(u * 100).toFixed(2)}%`
-    this.handle.style.left = `${(u * 100).toFixed(2)}%`
-    const mins = 2 + Math.floor(u * 12)
-    const nowText = `14:${String(mins).padStart(2, '0')}`
+    const secs = 32 + Math.floor(tt)
+    const nowText = `14:${String(9 + Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`
     if (nowText !== this.lastNow) { this.now.textContent = nowText; this.lastNow = nowText }
-    const v = String(Math.round(412 + 5 * Math.sin(Math.floor(tt * 1.6) * 1.7)))
+    const v = String(Math.round(2410 + 9 * Math.sin(Math.floor(tt * 1.4) * 1.7)))
     if (v !== this.lastVoc) { this.voc.textContent = v; this.lastVoc = v }
+  }
+
+  /** Plan rect inside the map canvas (device px): to the right of the left column. */
+  private planRect(W: number, H: number) {
+    const bx = W * 0.3, by = H * 0.12, bw = W * 0.675, bh = H * 0.7
+    const s = Math.min(bw / 100, bh / 64)
+    return { s, ox: bx + (bw - 100 * s) / 2, oy: by + (bh - 64 * s) / 2 }
+  }
+
+  /** Banded thermal field with contour lines, rendered once per layout. */
+  private heatImage(pw: number, ph: number) {
+    if (this.heat && this.heat.width === pw && this.heat.height === ph) return this.heat
+    const c = document.createElement('canvas')
+    c.width = pw; c.height = ph
+    const ctx = c.getContext('2d')!
+    const img = ctx.createImageData(pw, ph)
+    const N = 12
+    const band = new Uint8Array(pw * ph)
+    for (let j = 0; j < ph; j++) for (let i = 0; i < pw; i++) band[j * pw + i] = Math.min(N - 1, Math.floor(clamp(field((i / pw) * 100, (j / ph) * 64)) * N))
+    const px = (pw / 100)
+    const inPredicted = (x: number, y: number) =>
+      (x >= PREDICTED_ROOM[0] && x <= PREDICTED_ROOM[2] && y >= PREDICTED_ROOM[1] && y <= PREDICTED_ROOM[3]) ||
+      Math.hypot(x - SAMPLE_NEXT[0], y - SAMPLE_NEXT[1]) < 7
+    for (let j = 0; j < ph; j++) {
+      for (let i = 0; i < pw; i++) {
+        const k = j * pw + i
+        const b = band[k]
+        const col = rampColor((b + 0.5) / N)
+        const contour = (i > 0 && band[k - 1] !== b) || (j > 0 && band[k - pw] !== b)
+        const x = (i / pw) * 100, y = (j / ph) * 64
+        let a = 0.92
+        if (inPredicted(x, y) && Math.floor((i + j) / (3 * px)) % 2 === 0) a = 0.3
+        const o = k * 4
+        if (contour) { img.data[o] = 230; img.data[o + 1] = 236; img.data[o + 2] = 246; img.data[o + 3] = 150 }
+        else { img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = Math.round(a * 255) }
+      }
+    }
+    ctx.putImageData(img, 0, 0)
+    this.heat = c
+    return c
   }
 
   private drawMap(t: number) {
@@ -98,70 +203,61 @@ export class Mock {
     if (!ctx || c.width < 4) return
     const W = c.width, H = c.height
     ctx.clearRect(0, 0, W, H)
-    const s = Math.min(W / 104, H / 68)
-    const ox = (W - 100 * s) / 2, oy = (H - 64 * s) / 2
+    const { s, ox, oy } = this.planRect(W, H)
     const X = (x: number) => ox + x * s, Y = (y: number) => oy + y * s
     ctx.lineJoin = 'round'; ctx.lineCap = 'round'
 
-    // explored rooms
-    ctx.fillStyle = 'rgba(238,241,246,0.035)'
-    for (const [x, y, w, h] of [[4, 6, 30, 20], [34, 6, 32, 20], [4, 26, 92, 14], [4, 40, 46, 18]]) ctx.fillRect(X(x), Y(y), w * s, h * s)
+    // map bounds + thermal field
+    ctx.fillStyle = '#0e121a'
+    ctx.fillRect(X(0), Y(0), 100 * s, 64 * s)
+    ctx.drawImage(this.heatImage(Math.round(100 * s), Math.round(64 * s)), X(0), Y(0), 100 * s, 64 * s)
+    ctx.strokeStyle = 'rgba(238,241,246,0.12)'; ctx.lineWidth = 1
+    ctx.strokeRect(X(0) + 0.5, Y(0) + 0.5, 100 * s - 1, 64 * s - 1)
 
-    // heat bands: crisp steps, clipped to rooms
-    const band = (cx: number, cy: number, steps: [number, string, number][], clip: number[]) => {
-      ctx.save(); ctx.beginPath(); ctx.rect(X(clip[0]), Y(clip[1]), clip[2] * s, clip[3] * s); ctx.clip()
-      for (const [r, col, a] of steps) { ctx.globalAlpha = a; ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X(cx), Y(cy), r * s, 0, Math.PI * 2); ctx.fill() }
-      ctx.restore(); ctx.globalAlpha = 1
-    }
-    band(51, 16, [[15, COLORS.moderate, 0.2], [10, COLORS.poor, 0.28], [5.5, COLORS.alert, 0.34]], [34, 6, 32, 20])
-    band(58, 33, [[8, COLORS.moderate, 0.2], [4, COLORS.poor, 0.22]], [4, 26, 92, 14])
-    band(22, 49, [[9, COLORS.good, 0.16]], [4, 40, 46, 18])
-
-    // predicted room: stripes + likely source
-    ctx.save(); ctx.beginPath(); ctx.rect(X(66), Y(6), 30 * s, 20 * s); ctx.clip()
-    ctx.strokeStyle = COLORS.poor; ctx.globalAlpha = 0.32; ctx.lineWidth = Math.max(1, s * 0.6)
-    for (let k = -30; k < 60; k += 3.2) { ctx.beginPath(); ctx.moveTo(X(66 + k), Y(6)); ctx.lineTo(X(66 + k + 20), Y(26)); ctx.stroke() }
-    ctx.restore(); ctx.globalAlpha = 1
-    ctx.setLineDash([3 * s * 0.5, 2 * s * 0.5])
-    ctx.strokeStyle = COLORS.alert; ctx.lineWidth = Math.max(1, s * 0.5)
-    ctx.beginPath(); ctx.arc(X(82), Y(15), (6 + 0.6 * Math.sin(t * 2)) * s, 0, Math.PI * 2); ctx.stroke()
-    ctx.setLineDash([])
-    ctx.fillStyle = 'rgba(238,241,246,0.55)'
-    ctx.font = `${Math.max(7, 3.2 * s)}px Inter, system-ui, sans-serif`
-    ctx.textAlign = 'center'
-    ctx.fillText('likely source', X(82), Y(24.5))
-
-    // walls: crisp white; unexplored dim + dashed
-    ctx.strokeStyle = 'rgba(238,241,246,0.95)'; ctx.lineWidth = Math.max(1, s * 0.7)
+    // walls
+    ctx.strokeStyle = 'rgba(232,236,244,0.96)'; ctx.lineWidth = Math.max(1.2, s * 0.75)
     for (const w of WALLS) { ctx.beginPath(); ctx.moveTo(X(w[0][0]), Y(w[0][1])); for (const p of w.slice(1)) ctx.lineTo(X(p[0]), Y(p[1])); ctx.stroke() }
-    ctx.strokeStyle = 'rgba(238,241,246,0.3)'; ctx.setLineDash([2 * s * 0.6, 2 * s * 0.6])
+    ctx.strokeStyle = 'rgba(232,236,244,0.35)'; ctx.setLineDash([2.2 * s, 2.2 * s])
     for (const w of UNEXPLORED) { ctx.beginPath(); ctx.moveTo(X(w[0][0]), Y(w[0][1])); for (const p of w.slice(1)) ctx.lineTo(X(p[0]), Y(p[1])); ctx.stroke() }
     ctx.setLineDash([])
 
-    // crew: trails, badges, alert ring
+    // sample-next (dotted teal) and likely-source (dashed red) rings with labels
+    const fs = Math.max(6, 1.9 * s)
+    ctx.font = `500 ${fs}px Inter, system-ui, sans-serif`
+    ctx.textAlign = 'center'
+    ctx.strokeStyle = '#5eead4'; ctx.lineWidth = Math.max(1, s * 0.4); ctx.setLineDash([s * 0.6, s * 1.2])
+    ctx.beginPath(); ctx.arc(X(SAMPLE_NEXT[0]), Y(SAMPLE_NEXT[1]), 4.2 * s, 0, Math.PI * 2); ctx.stroke()
+    ctx.setLineDash([])
+    ctx.beginPath(); ctx.moveTo(X(SAMPLE_NEXT[0]) - 1.2 * s, Y(SAMPLE_NEXT[1])); ctx.lineTo(X(SAMPLE_NEXT[0]) + 1.2 * s, Y(SAMPLE_NEXT[1]))
+    ctx.moveTo(X(SAMPLE_NEXT[0]), Y(SAMPLE_NEXT[1]) - 1.2 * s); ctx.lineTo(X(SAMPLE_NEXT[0]), Y(SAMPLE_NEXT[1]) + 1.2 * s); ctx.stroke()
+    ctx.fillStyle = '#5eead4'
+    ctx.fillText('sample next', X(SAMPLE_NEXT[0]), Y(SAMPLE_NEXT[1]) - 5.6 * s)
+    ctx.strokeStyle = '#ff4d5e'; ctx.setLineDash([s * 1.4, s * 1.0])
+    ctx.beginPath(); ctx.arc(X(SOURCE[0]), Y(SOURCE[1]), (4.6 + 0.3 * Math.sin(t * 2)) * s, 0, Math.PI * 2); ctx.stroke()
+    ctx.setLineDash([])
+    ctx.fillStyle = '#ff4d5e'
+    ctx.fillText('likely source', X(SOURCE[0]), Y(SOURCE[1]) - 6.6 * s)
+
+    // trails + badges
     CREW.forEach((f, i) => {
-      const raw = t / f.period + i * 0.3
+      const raw = t / f.period + i * 0.37
       const u = f.pingpong ? tri(raw) : frac(raw)
       const trail = polyPrefix(f.path, u)
-      ctx.strokeStyle = f.color; ctx.globalAlpha = 0.45; ctx.lineWidth = Math.max(1, s * 0.5)
+      ctx.strokeStyle = f.color; ctx.globalAlpha = 0.5; ctx.lineWidth = Math.max(1, s * 0.3)
       ctx.beginPath(); ctx.moveTo(X(trail[0][0]), Y(trail[0][1])); for (const p of trail.slice(1)) ctx.lineTo(X(p[0]), Y(p[1])); ctx.stroke()
       ctx.globalAlpha = 1
+    })
+    CREW.forEach((f, i) => {
+      const raw = t / f.period + i * 0.37
+      const u = f.pingpong ? tri(raw) : frac(raw)
       const [px, py] = polyPoint(f.path, u)
-      if (i === 0) {
-        const k = frac(t / 1.4)
-        ctx.strokeStyle = COLORS.alert; ctx.globalAlpha = (1 - k) * 0.9; ctx.lineWidth = Math.max(1, s * 0.5)
-        ctx.beginPath(); ctx.arc(X(px), Y(py), (4 + k * 9) * s, 0, Math.PI * 2); ctx.stroke(); ctx.globalAlpha = 1
-      }
-      // hard-hat badge: dark disc, coloured hat
-      ctx.fillStyle = '#0d1119'; ctx.beginPath(); ctx.arc(X(px), Y(py), 3.4 * s, 0, Math.PI * 2); ctx.fill()
-      ctx.strokeStyle = f.color; ctx.lineWidth = Math.max(1, s * 0.5); ctx.stroke()
-      ctx.fillStyle = f.color
-      ctx.beginPath(); ctx.arc(X(px), Y(py + 0.4), 1.7 * s, Math.PI, 0); ctx.fill()
-      ctx.fillRect(X(px - 2.3), Y(py + 0.3), 4.6 * s, 0.7 * s)
-      ctx.fillStyle = 'rgba(238,241,246,0.8)'
-      ctx.font = `500 ${Math.max(7, 3 * s)}px "JetBrains Mono", ui-monospace, monospace`
+      ctx.fillStyle = 'rgba(255,255,255,0.14)'
+      ctx.beginPath(); ctx.arc(X(px), Y(py), f.r * 1.7 * s, 0, Math.PI * 2); ctx.fill()
+      drawHardHat(ctx, X(px), Y(py), f.r * s, f.color, '#0b0e14')
+      ctx.fillStyle = 'rgba(238,241,246,0.9)'
+      ctx.font = `600 ${Math.max(7, 2.4 * s)}px Inter, system-ui, sans-serif`
       ctx.textAlign = 'left'
-      ctx.fillText(f.label, X(px + 4.6), Y(py + 1.1))
+      ctx.fillText(f.letter, X(px) + (f.r + 1.2) * s, Y(py) + 0.9 * s)
     })
   }
 
@@ -170,24 +266,16 @@ export class Mock {
     if (!ctx || c.width < 4) return
     const W = c.width, H = c.height
     ctx.clearRect(0, 0, W, H)
-    const n = 70
-    const val = (i: number) => {
-      const base = 40 + 10 * Math.sin((i + t * 1.2) * 0.5) + 6 * Math.sin((i + t) * 1.7)
-      const rise = smooth((i - 42) / 24)
-      return lerp(base, 412 + 5 * Math.sin((i + t * 2) * 0.9), rise)
-    }
-    const Y = (v: number) => H - 2 - (v / 440) * (H - 4)
+    const n = 60
+    const val = (i: number) => 2410 + 60 * Math.sin((i + t * 1.2) * 0.5) + 40 * Math.sin((i + t) * 1.7) + 25 * Math.sin(i * 3.1)
+    const Y = (v: number) => H - 1 - ((v - 2150) / 500) * (H - 2)
     ctx.beginPath()
     for (let i = 0; i < n; i++) {
-      const x = (i / (n - 1)) * (W - 4) + 2
+      const x = (i / (n - 1)) * (W - 2) + 1
       if (i === 0) ctx.moveTo(x, Y(val(i)))
       else ctx.lineTo(x, Y(val(i)))
     }
-    ctx.strokeStyle = COLORS.alert; ctx.lineWidth = Math.max(1, W / 160); ctx.lineJoin = 'round'
+    ctx.strokeStyle = rgb(rampColor(rampT(2410))); ctx.lineWidth = Math.max(1, W / 220); ctx.lineJoin = 'round'
     ctx.stroke()
-    ctx.lineTo(W - 2, H); ctx.lineTo(2, H); ctx.closePath()
-    ctx.fillStyle = 'rgba(239,35,60,0.12)'; ctx.fill()
-    ctx.fillStyle = COLORS.alert
-    ctx.beginPath(); ctx.arc(W - 2, Y(val(n - 1)), Math.max(1.5, W / 90), 0, Math.PI * 2); ctx.fill()
   }
 }
