@@ -13,7 +13,8 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 TOPIC_POSE = "/pose"
 TOPIC_VOC_POINTS = "/voc_points"
 TOPIC_MAP = "/map"
-TOPICS = frozenset({TOPIC_POSE, TOPIC_VOC_POINTS, TOPIC_MAP})
+TOPIC_VOC = "/voc"  # raw sensor frame: TVOC, eCO2, raw signals, warm-up
+TOPICS = frozenset({TOPIC_POSE, TOPIC_VOC_POINTS, TOPIC_MAP, TOPIC_VOC})
 
 CELL_SIZE_M = 0.2  # must match voc_cells in db/schema.sql
 

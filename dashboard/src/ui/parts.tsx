@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { LEVEL_LABEL, level, levelColor } from '../lib/colors'
+import { LEVEL_LABEL, SCALE, level, levelColor } from '../lib/colors'
+import type { Sensor } from '../lib/types'
 import type { Dashboard } from '../lib/useDashboard'
 import type { Alert, TrailPoint } from '../lib/types'
 
@@ -30,7 +31,7 @@ export function Reading({ voc }: { voc: number | null }) {
 export function Sparkline({ points, width = 220, height = 36 }: { points: [number, number][]; width?: number; height?: number }) {
   if (points.length < 2) return <svg className="sparkline" width={width} height={height} />
   const t1 = points[points.length - 1][0], t0 = t1 - 60_000
-  const max = Math.max(300, ...points.map(([, v]) => v))
+  const max = Math.max(SCALE.max * 0.1, ...points.map(([, v]) => v))
   const d = points
     .filter(([t]) => t >= t0)
     .map(([t, v], i) => `${i ? 'L' : 'M'}${(((t - t0) / 60_000) * width).toFixed(1)},${(height - 2 - (v / max) * (height - 4)).toFixed(1)}`)
@@ -52,7 +53,7 @@ export function AlertBanner({ alerts, now, holdMs = 30_000, crew = 1 }: { alerts
   return (
     <div className="alert-banner" role="alert" onClick={() => setDismissed(a.ts)}>
       <strong>High VOC{crew > 1 && a.wearer ? ` · ${a.wearer}` : ''}</strong>
-      <span>VOC {fmt(a.voc)} at ({a.x.toFixed(1)}, {a.y.toFixed(1)}) m · {ago}s ago</span>
+      <span>VOC {fmt(a.voc)} {SCALE.short} at ({a.x.toFixed(1)}, {a.y.toFixed(1)}) m · {ago}s ago</span>
     </div>
   )
 }
@@ -132,7 +133,7 @@ function Strip({ points, start, span }: { points: TrailPoint[]; start: number; s
     }
     for (let i = 0; i < cols.length; i++) {
       if (!cols[i]) continue
-      const hgt = Math.max(2, (Math.min(cols[i], 500) / 500) * r.height)
+      const hgt = Math.max(2, (Math.min(cols[i], SCALE.max) / SCALE.max) * r.height)
       g.fillStyle = levelColor(cols[i])
       g.fillRect(i, r.height - hgt, 1, hgt)
     }
@@ -179,6 +180,33 @@ export function Attitude({ pose }: { pose: Dashboard['pose'] }) {
       {pose.pitch != null && <>P {deg(pose.pitch)} · </>}
       Y {Math.round(yaw)}°
     </span>
+  )
+}
+
+/**
+ * Everything else the gas sensor reports. eCO2 is the SGP30's estimate from its H2 channel, not a CO2
+ * measurement, and the raw signals are uncalibrated counts; shown for completeness, labelled as such.
+ */
+export function SensorPanel({ sensor }: { sensor: Sensor | null }) {
+  if (!sensor) return null
+  const n = (v: number | null, d = 0) => (v == null ? '—' : v.toFixed(d))
+  const rows: [string, string, string][] = [
+    ['eCO₂', n(sensor.eco2), 'ppm'],
+    ['raw H₂', n(sensor.raw_h2), ''],
+    ['raw EtOH', n(sensor.raw_ethanol), ''],
+  ]
+  if (sensor.temperature != null) rows.push(['temp', n(sensor.temperature, 1), '°C'])
+  if (sensor.humidity != null) rows.push(['humidity', n(sensor.humidity, 0), '%'])
+  return (
+    <dl className="sensor" title="Secondary channels from the SGP30. eCO₂ is estimated from the H₂ signal, not measured.">
+      {rows.map(([k, v, u]) => (
+        <div key={k} className="sensor-row">
+          <dt>{k}</dt>
+          <dd className="mono">{v}<span className="sensor-unit">{u}</span></dd>
+        </div>
+      ))}
+      {!sensor.warmed_up && <div className="sensor-row sensor-warm"><dt>sensor</dt><dd>warming up…</dd></div>}
+    </dl>
   )
 }
 

@@ -1,10 +1,11 @@
 // Focus: the map is the screen. One big reading floats over it; everything else is quiet.
 import MapStage from '../map/MapStage'
 import { THEMES } from '../map/theme'
-import { AlertBanner, Attitude, Crew, Reading, Sparkline, Status, SummaryButton, Timeline, Waiting, useNow } from '../ui/parts'
+import { SCALE } from '../lib/colors'
+import { AlertBanner, Attitude, Crew, Reading, SensorPanel, Sparkline, Status, Timeline, Waiting, useNow } from '../ui/parts'
 import type { DesignProps } from './types'
 
-export default function Focus({ s, setUntil, loadSummary, view, select }: DesignProps) {
+export default function Focus({ s, setUntil, view, select }: DesignProps) {
   const now = useNow()
   return (
     <div className="design d-focus">
@@ -13,13 +14,14 @@ export default function Focus({ s, setUntil, loadSummary, view, select }: Design
       <Waiting s={s} />
       <header className="f-top">
         <span className="brand">Hazard Map</span>
-        <div className="row"><Status s={s} /><SummaryButton s={s} load={loadSummary} /></div>
+        <div className="row"><Status s={s} /></div>
       </header>
       <section className="f-reading">
-        <span className="caption">VOC index</span>
+        <span className="caption">{SCALE.label}</span>
         <Reading voc={s.voc} />
         <Sparkline points={s.window} />
         <Attitude pose={s.pose} />
+        <SensorPanel sensor={s.sensor} />
         <Crew s={s} select={select} colors={THEMES.focus.crew} />
       </section>
       <AlertBanner alerts={s.alerts} now={now} crew={s.crew.length} />

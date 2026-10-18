@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import Dusk from './designs/Dusk'
 import Focus from './designs/Focus'
-import Paper from './designs/Paper'
 import type { DesignProps, ViewOptions } from './designs/types'
 import { createDemoSource } from './lib/demo'
 import { backendReachable, createLiveSource } from './lib/live'
 import type { DataSource } from './lib/types'
 import { useDashboard } from './lib/useDashboard'
 
-const DESIGNS = { focus: Focus, paper: Paper, dusk: Dusk } as const
+const DESIGNS = { focus: Focus } as const
 type DesignName = keyof typeof DESIGNS
 const NAMES = Object.keys(DESIGNS) as DesignName[]
 
@@ -67,11 +65,6 @@ function Dashboard({ source }: { source: DataSource }) {
   return (
     <div className={`t-${design}`}>
       <Design {...props} />
-      <nav className="picker" aria-label="Design">
-        {NAMES.map((n, i) => (
-          <button key={n} className={n === design ? 'on' : ''} onClick={() => setDesign(n)} title={`${i + 1}`}>{n}</button>
-        ))}
-      </nav>
     </div>
   )
 }

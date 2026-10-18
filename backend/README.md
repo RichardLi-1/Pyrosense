@@ -52,6 +52,7 @@ ROS-specific is installed on the backend host.
 | `map` | `url, version, origin[x,y], res, w, h, y_up, free_area_m2, ts` | every `/map` message (≈1 Hz) |
 | `pose` | `ts, x, y, heading, voc` | ≤10 Hz |
 | `voc` | `ts, voc, n_new, x, y` | each new `/voc_points` sample |
+| `sensor` | `ts, voc, unit, eco2, raw_h2, raw_ethanol, temperature, humidity, warmed_up` | each raw `/voc` frame (2 Hz); latest copy also in `hello.sensor` |
 | `alert` | `id, ts, x, y, voc, threshold, map_png_url` | alert engine fires |
 | `bridge` | `connected` | Pi link up/down |
 

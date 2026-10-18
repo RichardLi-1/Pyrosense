@@ -106,6 +106,7 @@ class LiveState:
     map: MapState | None = None
     n_samples: int = 0
     bridge_connected: bool = False
+    sensor: dict[str, Any] | None = None  # latest raw /voc frame (eCO2, raw signals, warm-up)
     tracker: PointTracker = field(default_factory=PointTracker)
     _map_version: int = 0
 
@@ -117,6 +118,7 @@ class LiveState:
         self.voc_ts = None
         self.voc_window.clear()
         self.n_samples = 0
+        self.sensor = None
         # Keep the tracker: the Pi's list still holds the old session's points, and
         # only readings published after the switch belong to the new session.
 
@@ -142,7 +144,7 @@ class LiveState:
 
     def hello_event(self, threshold: float, unit: str = "ppb") -> dict[str, Any]:
         return {"t": "hello", "session": self.session, "started": self.started_at.isoformat(),
-                "threshold": threshold, "unit": unit, "bridge_connected": self.bridge_connected,
+                "threshold": threshold, "unit": unit, "sensor": self.sensor, "bridge_connected": self.bridge_connected,
                 "n_samples": self.n_samples,
                 "voc_window": [[round(t, 3), v] for t, v in self.voc_window]}
 

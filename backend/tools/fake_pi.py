@@ -52,6 +52,14 @@ POINT_DTYPE = np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("voc", "<f4")
 POINT_DTYPE_T = np.dtype([("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("voc", "<f4"), ("t", "<f8")])
 
 
+def encode_voc(voc: float, warmed_up: bool) -> bytes:
+    sec, nsec = now_stamp()
+    w = CdrWriter().header(sec, nsec, "voc_link")
+    w.float32(voc).string("ppb").float32(400 + voc * 0.3).float32(13000 - voc).float32(18000 - 2 * voc)
+    w.float32(float("nan")).float32(float("nan")).bool(warmed_up)
+    return w.finish()
+
+
 def encode_points(pts: np.ndarray, times: np.ndarray | None = None) -> bytes:
     """pts (N, 4) x, y, z, voc; times (N,) unix seconds adds a FLOAT64 `t` field (point_step 24)."""
     sec, nsec = now_stamp()
@@ -133,7 +141,8 @@ async def main() -> None:
         ch = {}
         for topic, schema in (("/pose", "geometry_msgs/msg/PoseWithCovarianceStamped"),
                               ("/map", "nav_msgs/msg/OccupancyGrid"),
-                              ("/voc_points", "sensor_msgs/msg/PointCloud2")):
+                              ("/voc_points", "sensor_msgs/msg/PointCloud2"),
+                              ("/voc", "voc_msgs/msg/VocReading")):
             ch[topic] = await server.add_channel({"topic": topic, "encoding": "cdr", "schemaName": schema,
                                                   "schema": SCHEMAS[schema], "schemaEncoding": "ros2msg"})
         print(f"fake_pi: ws://{args.host}:{args.port}  topics={list(ch)}  spike_at={args.spike_at}")
@@ -148,7 +157,9 @@ async def main() -> None:
             await server.send_message(ch["/pose"], time.time_ns(), encode_pose(walker.x, walker.y, walker.yaw))
             if now - last_voc >= 1.0 / args.voc_hz:
                 last_voc = now
-                pts.append((walker.x, walker.y, 0.0, voc_at(walker.x, walker.y, t, args.spike_at)))
+                v = voc_at(walker.x, walker.y, t, args.spike_at)
+                await server.send_message(ch["/voc"], time.time_ns(), encode_voc(v, t > 15))
+                pts.append((walker.x, walker.y, 0.0, v))
                 times.append(now)
                 if len(pts) > args.max_points:
                     pts, times = pts[-args.max_points:], times[-args.max_points:]

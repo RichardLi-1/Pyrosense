@@ -1,8 +1,9 @@
 // All dashboard state in one place: the live event stream (one or more wearers),
 // polled heat map, trail, alerts, summary, and replay (`until`). Designs only render it.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Alert, DataSource, HeatCell, LiveEvent, MapMeta, Pose, Summary, TrailPoint } from './types'
+import type { Alert, DataSource, HeatCell, LiveEvent, MapMeta, Pose, Sensor, Summary, TrailPoint, VocUnit } from './types'
 import { DEFAULT_WEARER } from './types'
+import { configureScale } from './colors'
 
 type Wearer = { pose: Pose | null; voc: number | null; window: [number, number][] } // window: [ms, voc], last 60 s
 
@@ -13,6 +14,8 @@ type State = {
   session: string
   started: number | null
   threshold: number
+  unit: VocUnit
+  sensor: Sensor | null // latest raw frame from the gas sensor
   crew: string[] // wearer ids, in order of appearance
   wearers: Record<string, Wearer>
   selected: string | null
@@ -47,7 +50,7 @@ function withWearer(p: State, id: string, f: (w: Wearer) => Wearer): State {
 
 export function useDashboard(source: DataSource) {
   const [s, set] = useState<State>({
-    kind: source.kind, connected: false, bridge: false, session: '', started: null, threshold: 250,
+    kind: source.kind, connected: false, bridge: false, session: '', started: null, threshold: 2200, unit: 'ppb', sensor: null,
     crew: [], wearers: {}, selected: null, meta: null, image: null, alerts: [], heat: [], trail: [], history: [],
     until: null, summary: null, summaryLoading: false,
   })
@@ -61,7 +64,9 @@ export function useDashboard(source: DataSource) {
       switch (e.t) {
         case 'hello': {
           const id = e.wearers?.[0] ?? DEFAULT_WEARER
+          configureScale(e.unit)
           set((p) => withWearer({ ...p, session: e.session, started: Date.parse(e.started), threshold: e.threshold,
+                                  unit: e.unit ?? 'ppb', sensor: e.sensor ?? p.sensor,
                                   bridge: e.bridge_connected, crew: e.wearers ?? p.crew },
                                 id, (w) => ({ ...w, window: e.voc_window.map(([t, v]) => [t * 1000, v]) })))
           break
@@ -89,6 +94,9 @@ export function useDashboard(source: DataSource) {
           }))
           break
         }
+        case 'sensor':
+          set((p) => ({ ...p, sensor: e }))
+          break
         case 'alert':
           set((p) => ({ ...p, alerts: [e, ...p.alerts] }))
           break

@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 import { BAND_RGB } from '../lib/heatImage'
+import { SCALE, levelRanges } from '../lib/colors'
 import { useSourceModel } from '../lib/useSourceModel'
 import MapView from './MapView'
 import { insets, type MapProps } from './types'
@@ -17,10 +18,10 @@ function savedMode(): Mode {
 }
 
 const LEGEND = [
-  { key: 'good', label: 'Good', range: '<100' },
-  { key: 'moderate', label: 'Moderate', range: '100–249' },
-  { key: 'poor', label: 'Poor', range: '250–399' },
-  { key: 'alert', label: 'Hazardous', range: '400+' },
+  { key: 'good', label: 'Good' },
+  { key: 'moderate', label: 'Moderate' },
+  { key: 'poor', label: 'Poor' },
+  { key: 'alert', label: 'Hazardous' },
 ] as const
 
 /** The map, a 2D/3D switch, a Recenter button when the view has moved, and the legend. */
@@ -75,7 +76,7 @@ export default function MapStage(props: MapProps & { legend?: boolean }) {
       {props.legend !== false && (
         <div className="legend" style={{ left: ins.left + 16, bottom: ins.bottom + 16 }}>
           {LEGEND.map((l) => (
-            <span key={l.key} title={`VOC index ${l.range}`}>
+            <span key={l.key} title={`${SCALE.label} ${levelRanges()[l.key]}`}>
               <i style={{ background: `rgb(${BAND_RGB[l.key].join(',')})` }} />{l.label}
             </span>
           ))}

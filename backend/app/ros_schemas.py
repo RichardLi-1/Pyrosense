@@ -77,7 +77,19 @@ uint32 height
 geometry_msgs/Pose origin
 {POSE_DEPS}"""
 
+VOC_READING = f"""std_msgs/Header header
+float32 voc
+string unit
+float32 eco2
+float32 raw_h2
+float32 raw_ethanol
+float32 temperature
+float32 humidity
+bool warmed_up
+{HEADER_DEPS}"""
+
 SCHEMAS = {
+    "voc_msgs/msg/VocReading": VOC_READING,
     "geometry_msgs/msg/PoseWithCovarianceStamped": POSE_WITH_COV_STAMPED,
     "sensor_msgs/msg/PointCloud2": POINT_CLOUD2,
     "nav_msgs/msg/OccupancyGrid": OCCUPANCY_GRID,

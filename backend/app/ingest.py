@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 
 from .alerts import AlertEngine
-from .config import TOPIC_MAP, TOPIC_POSE, TOPIC_VOC_POINTS, Settings
+from .config import TOPIC_MAP, TOPIC_POSE, TOPIC_VOC, TOPIC_VOC_POINTS, Settings
 from .db import Database
 from .ros import map_from_msg, map_to_png, point_times, points_from_pointcloud, pose_from_msg, stamp_to_datetime
 from .state import Broadcaster, LiveState
@@ -34,6 +34,21 @@ class Ingest:
             await self._on_points(msg)
         elif topic == TOPIC_MAP:
             self._on_map(msg)
+        elif topic == TOPIC_VOC:
+            self._on_voc(msg)
+
+    def _on_voc(self, msg) -> None:
+        """Raw sensor frame from voc_driver: everything the chip reports, not just TVOC."""
+        import math
+        ts = datetime.fromtimestamp(msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9, tz=timezone.utc)
+        f = lambda v: None if v is None or (isinstance(v, float) and math.isnan(v)) else float(v)  # noqa: E731
+        sensor = {"ts": ts.isoformat(), "voc": f(msg.voc), "unit": str(msg.unit) or self.s.voc_unit,
+                  "eco2": f(getattr(msg, "eco2", None)), "raw_h2": f(getattr(msg, "raw_h2", None)),
+                  "raw_ethanol": f(getattr(msg, "raw_ethanol", None)),
+                  "temperature": f(getattr(msg, "temperature", None)), "humidity": f(getattr(msg, "humidity", None)),
+                  "warmed_up": bool(getattr(msg, "warmed_up", True))}
+        self.state.sensor = sensor
+        self.bus.publish({"t": "sensor", **sensor})
 
     def _on_pose(self, msg) -> None:
         pose = pose_from_msg(msg)

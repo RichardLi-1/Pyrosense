@@ -16,9 +16,17 @@ export type MapMeta = {
 
 export type Alert = { id: number | null; ts: string; x: number; y: number; voc: number; threshold?: number; wearer?: string }
 
+/** Raw frame from the gas sensor (SGP30): TVOC plus the values the chip reports alongside it. */
+export type Sensor = {
+  ts: string; voc: number | null; unit: VocUnit; eco2: number | null; raw_h2: number | null; raw_ethanol: number | null
+  temperature: number | null; humidity: number | null; warmed_up: boolean
+}
+export type VocUnit = 'ppb' | 'index'
+
 export type LiveEvent =
-  | { t: 'hello'; session: string; started: string; threshold: number; bridge_connected: boolean;
-      n_samples: number; voc_window: [number, number][]; wearers?: string[] }
+  | { t: 'hello'; session: string; started: string; threshold: number; unit?: VocUnit; sensor?: Sensor | null;
+      bridge_connected: boolean; n_samples: number; voc_window: [number, number][]; wearers?: string[] }
+  | ({ t: 'sensor' } & Sensor)
   | ({ t: 'map' } & MapMeta)
   | ({ t: 'pose' } & Pose)
   | { t: 'voc'; ts: string; voc: number; n_new: number; x: number; y: number; wearer?: string }
