@@ -57,7 +57,8 @@ export class DisplayField {
   tick(now: number, live: boolean): boolean {
     if (!this.V || !this.T || !this.S || !this.F) { const d = this.dirty; this.dirty = false; return d }
     if (now - this.last < TICK_MS) return false
-    const dt = Math.min(0.25, this.last ? (now - this.last) / 1000 : TICK_MS / 1000)
+    // explicit diffusion is only stable for D·dt/res² ≤ 0.25; a dropped frame must not blow the field up
+    const dt = Math.min(0.2 * RES * RES / D, this.last ? (now - this.last) / 1000 : TICK_MS / 1000)
     this.last = now
     if (!live) { const d = this.dirty; this.dirty = false; return d }
     const { cols, rows, V, T, S, F, base } = this

@@ -252,6 +252,18 @@ export function useDashboard(source: DataSource) {
   }, [source])
 
   const closeReview = useCallback(() => set((p) => ({ ...p, review: null })), [])
+
+  // ?review=1 (or an id): open a scan for review as soon as the catalog answers, so review can be screenshotted
+  const autoReview = useRef(false)
+  useEffect(() => {
+    const want = new URLSearchParams(location.search).get('review')
+    if (!want || autoReview.current || !s.session || !source.sessions) return
+    autoReview.current = true
+    source.sessions().then((list) => {
+      const scan = list.find((x) => x.session === want) ?? list[0]
+      if (scan) openReview(scan)
+    }).catch(() => {})
+  }, [s.session, source, openReview])
   const markWarningsRead = useCallback(() => set((p) => (p.warningsSeen === p.warnings.length ? p : { ...p, warningsSeen: p.warnings.length })), [])
 
   // scrubbing inside a review: refetch that scan's heat and trail up to `until`

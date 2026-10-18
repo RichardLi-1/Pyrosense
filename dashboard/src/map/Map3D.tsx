@@ -6,7 +6,9 @@
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import { bandImage, isolines, layerGrid, strokeIsolines } from '../lib/heatImage'
+import { bandImage, isolines, kernelGrid, layerGrid, strokeIsolines } from '../lib/heatImage'
+import { DisplayField } from '../lib/diffuse'
+import { SCALE, rampColor, rampT } from '../lib/colors'
 import { drawMark, markKind, type Mark } from '../lib/marks'
 import { Plume } from '../lib/plume'
 import Compass from '../ui/Compass'
@@ -20,7 +22,7 @@ const WALL_FULL = 2.6 // m: in first person
 const EYE_H = 1.6
 const FOV_OVERHEAD = 32
 const FOV_FIRST = 72
-const GAS_SIZE = 1.2 // m, billboard diameter: large, soft, overlapping, so puffs merge into one volume
+const HAZE_SIZE = 1.8 // m, haze billboard diameter: large, faint, overlapping, so they merge into one cloud
 
 type Rect = { c0: number; r0: number; w: number; h: number } // grid pixels, image rows (row 0 = max y)
 
@@ -94,6 +96,8 @@ type Person = { group: THREE.Group; body: THREE.Group; ring: THREE.Mesh; stem: T
 type Api = {
   setWalls: (rects: Rect[], meta: MapMeta) => void
   setFloor: (canvas: HTMLCanvasElement, meta: MapMeta) => void
+  setFloorBase: (canvas: HTMLCanvasElement | null, meta: MapMeta | null) => void
+  setField: (...args: Parameters<DisplayField['setTarget']> | [null]) => void
   setPlumeMask: (m: { data: Uint8Array; meta: MapMeta }) => void
   setMarks: (marks: Mark[]) => void
   setTheme: () => void
@@ -146,6 +150,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     // floor: free space + VOC field, one canvas texture
     const floorMat = new THREE.MeshBasicMaterial({ transparent: true })
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), floorMat)
+    floor.visible = false // until the first floor texture arrives (a bare MeshBasicMaterial would render white)
     floor.visible = false
     scene.add(floor)
 
@@ -160,9 +165,25 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     const liveGas = new THREE.Points(new THREE.BufferGeometry(), liveMat)
     liveGas.frustumCulled = false
     liveGas.renderOrder = 3
+    liveGas.visible = false // per-particle points read as opaque discs in 3D: never shown
     scene.add(liveGas)
+    // the haze: large, faint billboards above elevated cells of the draped field, merging into one cloud
+    const hazeMat = gasMat.clone()
+    hazeMat.blending = THREE.AdditiveBlending
+    const haze = new THREE.Points(new THREE.BufferGeometry(), hazeMat)
+    haze.frustumCulled = false
+    haze.renderOrder = 3
+    scene.add(haze)
     const plume = new Plume()
     let plumeAt = 0
+    // the floor picture is composed here, a few times a second: granite base (+ fog), the
+    // diffusing field as band fill + contours, and the bloom splats, exactly as the 2D map draws them
+    const display = new DisplayField()
+    let floorBase: { canvas: HTMLCanvasElement; meta: MapMeta } | null = null
+    const floorCanvas = document.createElement('canvas')
+    const floorCtx = floorCanvas.getContext('2d')!
+    const bloomCanvas = document.createElement('canvas')
+    const bloomCtx = bloomCanvas.getContext('2d')!
 
 
     // commander's annotations: always-on-top pins, constant screen size
@@ -237,7 +258,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       alertMat.color.set(T.alert)
       gasMat.blending = T.glow3d === 'additive' ? THREE.AdditiveBlending : THREE.NormalBlending
       gasMat.needsUpdate = true
-      liveMat.needsUpdate = true
+      liveMat.needsUpdate = true; hazeMat.needsUpdate = true
     }
     setTheme()
 
@@ -324,6 +345,8 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         })
         wallGroup.add(walls, caps)
       },
+      setField(...args) { if (args[0] == null) display.clear(); else display.setTarget(...(args as Parameters<DisplayField['setTarget']>)) },
+      setFloorBase(canvas, m) { floorBase = canvas && m ? { canvas, meta: m } : null; plumeAt = 0 },
       setFloor(canvas, m) {
         const old = floorMat.map
         const tex = new THREE.CanvasTexture(canvas)
@@ -331,6 +354,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         tex.anisotropy = 4
         floorMat.map = tex
         floorMat.needsUpdate = true
+        floor.visible = true
         old?.dispose()
         floor.scale.set(m.w * m.res, 1, m.h * m.res)
         floor.position.set(m.origin[0] + (m.w * m.res) / 2, 0, -(m.origin[1] + (m.h * m.res) / 2))
@@ -540,29 +564,72 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         controls.update()
       }
 
-      // live cloud from the plume (rebuilt a few times a second)
-      if (P.layers.gas && P.meta) {
+      // the floor picture: diffusing field + contours + blooms draped on the floor, a soft haze above elevated spots
+      if (floorBase && P.meta) {
         const wall = Date.now()
+        const live = P.until == null
         plume.sync(P.trail, P.until ?? wall)
-        if (P.until == null) plume.step(dt, null, wall)
-        if (tnow - plumeAt > 250) {
+        if (live) plume.step(dt, null, wall)
+        const moved = display.tick(tnow, live)
+        if (moved || tnow - plumeAt > 400) try {
           plumeAt = tnow
-          const snap = plume.snapshot(P.until ?? wall)
+          const m = floorBase.meta, top = m.origin[1] + m.h * m.res
+          if (floorCanvas.width !== m.w || floorCanvas.height !== m.h) { floorCanvas.width = m.w; floorCanvas.height = m.h; bloomCanvas.width = m.w; bloomCanvas.height = m.h }
+          floorCtx.globalCompositeOperation = 'source-over'
+          floorCtx.clearRect(0, 0, m.w, m.h)
+          floorCtx.drawImage(floorBase.canvas, 0, 0)
+          const px = (x: number) => (x - m.origin[0]) / m.res, py = (y: number) => (top - y) / m.res
+          const dg = P.layers.gas ? display.grid() : null
+          const hz: number[] = [], hc: number[] = [], ha: number[] = [], hp: number[] = []
+          if (dg) {
+            const band = bandImage(dg, { prior: dg.prior, priorWeight: 1, alphaBy: dg.alphaBy, skipThin: true })
+            floorCtx.globalCompositeOperation = 'source-atop' // only on scanned floor
+            floorCtx.imageSmoothingEnabled = true
+            floorCtx.drawImage(band.canvas, px(band.x0), py(band.y1), band.w / m.res, band.h / m.res)
+            strokeIsolines(floorCtx, isolines(dg, { prior: dg.prior, priorWeight: 1 }), px, py, 1.4, P.theme.ink)
+            // haze: large, faint, overlapping billboards over cells at or above the moderate band
+            const a0 = SCALE.bands[0]
+            let seed = 3
+            const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff }
+            for (let r = 0; r < dg.rows; r++) for (let c = 0; c < dg.cols; c++) {
+              const i = r * dg.cols + c
+              if (!dg.den[i] || dg.num[i] < a0) continue
+              const v = dg.num[i], t = rampT(v), [cr, cg, cb] = rampColor(t)
+              const x = dg.x0 + (c + 0.5) * dg.res, y = dg.y0 + (r + 0.5) * dg.res
+              const n = v >= SCALE.bands[2] ? 3 : v >= SCALE.bands[1] ? 2 : 1
+              for (let k = 0; k < n; k++) {
+                hz.push(x + (rnd() - 0.5) * 0.3, 0.7 + rnd() * 0.9 + k * 0.25, -(y + (rnd() - 0.5) * 0.3))
+                hc.push(cr / 255, cg / 255, cb / 255)
+                ha.push(0.035 * Math.min(1.6, 0.6 + t)) // density comes from overlap, not from any one billboard
+                hp.push(rnd() * Math.PI * 2)
+              }
+            }
+          }
+          // bloom splats, clipped to the scanned floor
+          bloomCtx.globalCompositeOperation = 'source-over'
+          bloomCtx.clearRect(0, 0, m.w, m.h)
+          plume.draw(bloomCtx, px, py, 1 / m.res, P.until ?? wall, { particles: false }) // splats only: no per-particle dots in 3D
+          floorCtx.globalCompositeOperation = 'source-atop'
+          floorCtx.drawImage(bloomCanvas, 0, 0)
+          floorCtx.globalCompositeOperation = 'source-over'
+          api.current?.setFloor(floorCanvas, m)
           const g = new THREE.BufferGeometry()
-          g.setAttribute('position', new THREE.BufferAttribute(snap.positions, 3))
-          g.setAttribute('aColor', new THREE.BufferAttribute(snap.colors, 3))
-          g.setAttribute('aAlpha', new THREE.BufferAttribute(snap.alphas, 1))
-          g.setAttribute('aPhase', new THREE.BufferAttribute(snap.phases, 1))
-          liveGas.geometry.dispose(); liveGas.geometry = g
+          g.setAttribute('position', new THREE.BufferAttribute(Float32Array.from(hz), 3))
+          g.setAttribute('aColor', new THREE.BufferAttribute(Float32Array.from(hc), 3))
+          g.setAttribute('aAlpha', new THREE.BufferAttribute(Float32Array.from(ha), 1))
+          g.setAttribute('aPhase', new THREE.BufferAttribute(Float32Array.from(hp), 1))
+          haze.geometry.dispose(); haze.geometry = g
+        } catch (err) {
+          console.warn('floor compose failed; keeping the base floor', err)
+          api.current?.setFloor(floorBase.canvas, floorBase.meta)
         }
-        liveGas.visible = true
-      } else liveGas.visible = false
-      for (const [m, sz, al] of [[liveMat, GAS_SIZE, 0.35]] as const) {
-        m.uniforms.uTime.value = (performance.now() - t0) / 1000
-        m.uniforms.uScale.value = (sz * size.h * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360))
-        m.uniforms.uMaxSize.value = 220 * renderer.getPixelRatio()
-        m.uniforms.uAlpha.value = al
-      }
+        haze.visible = P.layers.gas
+      } else haze.visible = false
+      liveGas.visible = false // the particle Points stay hidden in 3D, whatever the layer toggle
+      hazeMat.uniforms.uTime.value = (performance.now() - t0) / 1000
+      hazeMat.uniforms.uScale.value = (HAZE_SIZE * size.h * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360))
+      hazeMat.uniforms.uMaxSize.value = 140 * renderer.getPixelRatio()
+      hazeMat.uniforms.uAlpha.value = fp ? 0.7 : 1
 
       // orientation: the rose turns with the camera; in first person a heading strip shows degrees and the nearest points
       {
@@ -636,30 +703,36 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     const img = g.createImageData(meta.w, meta.h)
     const col = new THREE.Color(theme.floor3d)
     const [fr, fg, fb] = [col.r, col.g, col.b].map((v) => Math.round(v * 255))
+    // the backend's PNG encodes free/occupied/unknown in alpha; an image without any transparent
+    // pixel carries no such layout, so the whole plan is treated as floor rather than left white
+    let anyUnknown = false
+    for (let i = 3; i < data.length; i += 4) if (data[i] === 0) { anyUnknown = true; break }
     for (let i = 0; i < meta.w * meta.h; i++) {
-      if (data[i * 4 + 3] > 240) { img.data[i * 4] = fr; img.data[i * 4 + 1] = fg; img.data[i * 4 + 2] = fb; img.data[i * 4 + 3] = 255 }
+      if (!anyUnknown || data[i * 4 + 3] > 240) { img.data[i * 4] = fr; img.data[i * 4 + 1] = fg; img.data[i * 4 + 2] = fb; img.data[i * 4 + 3] = 255 }
     }
     g.putImageData(img, 0, 0)
     const top = meta.origin[1] + meta.h * meta.res
-    if (layers.gas && field) {
-      // the measured GP field on the floor, fading with confidence (same picture as the 2D map)
-      const fg0 = layerGrid(field, field.mean, field.conf, 0.1)
-      const alphaBy = new Float32Array(fg0.conf.length)
-      for (let i = 0; i < alphaBy.length; i++) alphaBy[i] = fg0.conf[i] > 0 ? 0.2 + 0.8 * fg0.conf[i] : 0
-      const band = bandImage(fg0, { prior: fg0.prior, priorWeight: 1, alphaBy, skipThin: false })
-      g.globalCompositeOperation = 'source-atop' // only on scanned floor
-      g.drawImage(band.canvas, (band.x0 - meta.origin[0]) / meta.res, (top - band.y1) / meta.res,
-                  band.w / meta.res, band.h / meta.res)
-      strokeIsolines(g, isolines(fg0, { prior: fg0.prior, priorWeight: 1 }),
-                     (x) => (x - meta.origin[0]) / meta.res, (y) => (top - y) / meta.res, 1.4, theme.ink)
-    }
     const fog = layers.uncertainty && field ? uncertaintyImage(field) : null
     if (fog) {
       g.globalCompositeOperation = 'source-atop'
       g.imageSmoothingEnabled = true
       g.drawImage(fog.canvas, (fog.x0 - meta.origin[0]) / meta.res, (top - fog.y1) / meta.res, fog.w / meta.res, fog.h / meta.res)
     }
-    api.current.setFloor(c, meta)
+    // the field itself goes through the diffusing display (same as the 2D map); the tick composes it onto this base
+    const isFree = (x: number, y: number) => {
+      const cc = Math.floor((x - meta.origin[0]) / meta.res), rr = Math.floor((top - y) / meta.res)
+      return cc >= 0 && rr >= 0 && cc < meta.w && rr < meta.h && data[(rr * meta.w + cc) * 4 + 3] > 240
+    }
+    if (field) {
+      const fg0 = layerGrid(field, field.mean, field.conf, 0.1)
+      api.current.setField(fg0, (i) => fg0.num[i], (i) => fg0.conf[i] > 0, (i) => 0.2 + 0.8 * fg0.conf[i], isFree, field.base)
+    } else {
+      const kg = kernelGrid(heat, 0.3, 0.05)
+      if (kg) api.current.setField(kg, (i) => (kg.den[i] > 0 ? kg.num[i] / kg.den[i] : NaN), (i) => kg.den[i] >= 0.3, (i) => Math.min(1, kg.den[i] / 0.9), isFree, 0.2 * SCALE.bands[0])
+      else api.current.setField(null)
+    }
+    api.current.setFloor(c, meta) // granite (and fog) right away; the tick overlays the field and splats
+    api.current.setFloorBase(c, meta)
   }, [meta, theme, heat, layers.gas, layers.uncertainty, field])
 
   useEffect(() => { api.current?.setMarks(marks) }, [marks])

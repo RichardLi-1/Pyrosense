@@ -172,7 +172,8 @@ export class Plume {
   }
 
   /** Draw blooms and particles (additive) with a world→screen mapping. */
-  draw(ctx: CanvasRenderingContext2D, sx: (x: number) => number, sy: (y: number) => number, scale: number, now: number) {
+  draw(ctx: CanvasRenderingContext2D, sx: (x: number) => number, sy: (y: number) => number, scale: number, now: number,
+       opts: { particles?: boolean } = {}) {
     ctx.save()
     ctx.globalCompositeOperation = 'lighter'
     for (const b of this.blooms) {
@@ -186,7 +187,7 @@ export class Plume {
     }
     ctx.globalAlpha = 1
     const d = Math.max(3, SPRITE_R_M * 2 * scale)
-    for (const q of this.parts) {
+    if (opts.particles !== false) for (const q of this.parts) {
       const a = 0.22 * GAIN_2D[q.level] * Math.pow(0.5, (now - q.born) / (HALF_LIFE_S * 1000))
       if (a < 0.008) continue
       ctx.globalAlpha = a
