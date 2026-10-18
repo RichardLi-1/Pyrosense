@@ -13,6 +13,7 @@ import { SCALE } from '../lib/colors'
 import { drawMark, markKind, type Mark } from '../lib/marks'
 import { chooseNext, predictMovement, type Movement } from '../lib/nextSample'
 import { Plume } from '../lib/plume'
+import Compass from '../ui/Compass'
 import { uncertaintyImage } from '../lib/uncertainty'
 import { DEFAULT_WEARER, type MapMeta } from '../lib/types'
 import { drawHardHat } from './theme'
@@ -23,7 +24,8 @@ const WALL_FULL = 2.6 // m: in first person
 const EYE_H = 1.6
 const FOV_OVERHEAD = 32
 const FOV_FIRST = 72
-const GAS_SIZE = 0.32 // m, particle diameter
+const GAS_SIZE = 1.2 // m, billboard diameter: large, soft, overlapping, so puffs merge into one volume
+const PUFF_SIZE = 0.6 // m, the red prediction puff stays tighter and distinct
 
 type Rect = { c0: number; r0: number; w: number; h: number } // grid pixels, image rows (row 0 = max y)
 
@@ -113,6 +115,8 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
   p.current = props
   const api = useRef<Api | null>(null)
   const [ghostOn, setGhostOn] = useState(false)
+  const compassRef = useRef<SVGSVGElement>(null)
+  const stripRef = useRef<HTMLDivElement>(null)
 
   // scene setup, once
   useEffect(() => {
@@ -156,7 +160,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     // gas: particle cloud, drifting
     const gasMat = new THREE.ShaderMaterial({
       vertexShader: GAS_VERT, fragmentShader: GAS_FRAG, transparent: true, depthWrite: false,
-      uniforms: { uTime: { value: 0 }, uScale: { value: 1 }, uMaxSize: { value: 64 }, uAlpha: { value: 1 } },
+      uniforms: { uTime: { value: 0 }, uScale: { value: 1 }, uMaxSize: { value: 220 }, uAlpha: { value: 1 } },
     })
     const gas = new THREE.Points(new THREE.BufferGeometry(), gasMat)
     gas.frustumCulled = false
@@ -226,6 +230,11 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       const group = new THREE.Group(), body = new THREE.Group()
       const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ transparent: true }))
       ring.position.y = 0.02
+      const arrow = new THREE.Mesh(new THREE.ShapeGeometry(new THREE.Shape([new THREE.Vector2(0.9, 0), new THREE.Vector2(0.35, 0.16), new THREE.Vector2(0.35, -0.16)]))
+                                     .rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.95, depthWrite: false }))
+      arrow.position.y = 0.03
+      arrow.name = 'arrow'
+      ring.add(arrow)
       const stem = new THREE.Mesh(stemGeo, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.6 }))
       const badge = new THREE.Sprite(new THREE.SpriteMaterial({ depthTest: false, sizeAttenuation: false }))
       badge.position.y = EYE_H
@@ -498,6 +507,8 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         pr.badge.scale.set(s, s, 1)
         const pulse = (performance.now() % 2200) / 2200
         pr.ring.scale.setScalar(sel ? 1 + pulse * 1.6 : 1)
+      const arrow = pr.ring.getObjectByName('arrow') as THREE.Mesh | undefined
+      if (arrow) { arrow.rotation.y = pr.heading; arrow.scale.setScalar((sel ? 1.25 : 1) / pr.ring.scale.x); (arrow.material as THREE.MeshBasicMaterial).color.set(pr.color || '#fff'); (arrow.material as THREE.MeshBasicMaterial).opacity = dim ? 0.25 : 0.95 }
         ;(pr.ring.material as THREE.MeshBasicMaterial).opacity = dim ? 0.15 : sel ? 1 - pulse : 0.5
       }
       for (const [id, pr] of people) if (!live.has(id)) pr.group.visible = false
@@ -648,17 +659,31 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         puff.position.set(x0 + (mv.x - x0) * (0.25 + 0.75 * ease), 0, -(y0 + (mv.y - y0) * (0.25 + 0.75 * ease)))
         puff.visible = true
       } else puff.visible = false
-      for (const m of [liveMat, puffMat]) {
+      for (const [m, sz, al] of [[liveMat, GAS_SIZE, 0.35], [puffMat, PUFF_SIZE, 1]] as const) {
         m.uniforms.uTime.value = (performance.now() - t0) / 1000
-        m.uniforms.uScale.value = (GAS_SIZE * size.h * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360))
-        m.uniforms.uMaxSize.value = 48 * renderer.getPixelRatio()
-        m.uniforms.uAlpha.value = 1
+        m.uniforms.uScale.value = (sz * size.h * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360))
+        m.uniforms.uMaxSize.value = 220 * renderer.getPixelRatio()
+        m.uniforms.uAlpha.value = al
       }
 
       gasMat.uniforms.uTime.value = (performance.now() - t0) / 1000
       gasMat.uniforms.uScale.value = (GAS_SIZE * size.h * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360))
-      gasMat.uniforms.uMaxSize.value = 48 * renderer.getPixelRatio()
-      gasMat.uniforms.uAlpha.value += ((fp ? 0.45 : 1) - gasMat.uniforms.uAlpha.value) * 0.1
+      gasMat.uniforms.uMaxSize.value = 220 * renderer.getPixelRatio()
+      gasMat.uniforms.uAlpha.value += ((fp ? 0.12 : 0.22) - gasMat.uniforms.uAlpha.value) * 0.1 // low per-billboard alpha: density comes from overlap
+      // orientation: the rose turns with the camera; in first person a heading strip shows degrees and the nearest points
+      {
+        const dir = new THREE.Vector3(); camera.getWorldDirection(dir)
+        const camYaw = Math.atan2(-dir.z, dir.x) // map frame: 0 = east, counter-clockwise
+        const north = ((Math.PI / 2 - camYaw) * 180) / Math.PI // screen rotation that keeps N pointing north
+        if (compassRef.current) compassRef.current.style.transform = `rotate(${-north}deg)`
+        if (stripRef.current) {
+          const hdg = ((90 - (camYaw * 180) / Math.PI) % 360 + 360) % 360 // compass heading, 0 = N clockwise
+          const names = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+          const left = names[(Math.round(hdg / 45) + 7) % 8], right = names[(Math.round(hdg / 45) + 1) % 8]
+          stripRef.current.textContent = `${left}   ·   ${Math.round(hdg)}°   ·   ${right}`
+          stripRef.current.style.display = fp ? '' : 'none'
+        }
+      }
       renderer.render(scene, camera)
     }
     tick()
@@ -763,6 +788,8 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
   return (
     <>
       <div ref={hostRef} className={`map-3d${props.onPick ? ' picking' : ''}`} />
+      <Compass ref={compassRef} className="compass-3d" />
+      <div ref={stripRef} className="heading-strip mono" style={{ display: 'none' }} />
       {ghostOn && <div className="ghost-hint">Ghost · W A S D to move · press C to return</div>}
     </>
   )

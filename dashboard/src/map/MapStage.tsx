@@ -3,6 +3,7 @@ import { RAMP_BANDS, SCALE, levelRanges, rampGradient, rampT } from '../lib/colo
 import { HORIZONS } from '../lib/forecast'
 import { responderLabel } from '../lib/types'
 import { LAYERS, type LayerKey, type Layers } from './layers'
+import Compass from '../ui/Compass'
 import MapView from './MapView'
 import type { MapProps } from './types'
 
@@ -100,6 +101,7 @@ export default function MapStage(props: StageProps) {
   return (
     <>
       {mode === '2d' ? <MapView {...r} /> : <Suspense fallback={null}><Map3D {...r} firstPerson={mode === 'fp'} /></Suspense>}
+      {mode === '2d' && <Compass className="compass-2d" />}
 
       <div className="map-bar" style={{ left: 28, right: 28, bottom: 0 }}>
         <div className="map-ctrl">

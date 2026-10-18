@@ -502,13 +502,31 @@ export default function MapView(props: RendererProps) {
           ctx.beginPath(); ctx.arc(x, y, 15 + pulse * 18, 0, Math.PI * 2); ctx.fill()
           ctx.globalAlpha = 1
         }
-        const cone = sel ? 58 : 40
+        // facing: a long bright wedge with a crisp arrow tip in the badge colour, and the heading in degrees
+        const cone = sel ? 116 : 80
         const g = ctx.createRadialGradient(x, y, 10, x, y, cone)
-        g.addColorStop(0, T.halo); g.addColorStop(1, 'rgba(0,0,0,0)')
+        g.addColorStop(0, hexA(color, 0.42)); g.addColorStop(0.6, hexA(color, 0.16)); g.addColorStop(1, hexA(color, 0))
         ctx.fillStyle = g
         ctx.beginPath(); ctx.moveTo(x, y)
-        ctx.arc(x, y, cone, -sh.h - 0.42, -sh.h + 0.42)
+        ctx.arc(x, y, cone, -sh.h - 0.36, -sh.h + 0.36)
         ctx.closePath(); ctx.fill()
+        {
+          const tipR = cone * 0.78, ax = x + Math.cos(-sh.h) * tipR, ay = y + Math.sin(-sh.h) * tipR
+          const bx = x + Math.cos(-sh.h) * (tipR - 12), by = y + Math.sin(-sh.h) * (tipR - 12)
+          const nx = -Math.sin(-sh.h), ny = Math.cos(-sh.h)
+          ctx.fillStyle = color
+          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx + nx * 5.5, by + ny * 5.5); ctx.lineTo(bx - nx * 5.5, by - ny * 5.5); ctx.closePath(); ctx.fill()
+          ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineCap = 'round'
+          ctx.beginPath(); ctx.moveTo(x + Math.cos(-sh.h) * (sel ? 16 : 13), y + Math.sin(-sh.h) * (sel ? 16 : 13)); ctx.lineTo(bx, by); ctx.stroke()
+          if (sel && !dim) {
+            const deg = Math.round((((sh.h * 180) / Math.PI) % 360 + 360) % 360)
+            ctx.font = '600 11px JetBrains Mono, ui-monospace, monospace'
+            ctx.textAlign = 'left'
+            ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(7,9,13,0.8)'; ctx.lineJoin = 'round'
+            const lx = x + (crew ? 18 : 16), ly = y + (crew ? 18 : 4)
+            ctx.strokeText(`${deg}°`, lx, ly); ctx.fillStyle = color; ctx.fillText(`${deg}°`, lx, ly)
+          }
+        }
         ctx.shadowColor = 'rgba(0,0,0,0.35)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 2
         drawHardHat(ctx, x, y, sel ? 14 : 11, color, T.icon)
         ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0
