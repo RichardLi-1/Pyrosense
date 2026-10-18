@@ -150,6 +150,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     // floor: free space + VOC field, one canvas texture
     const floorMat = new THREE.MeshBasicMaterial({ transparent: true })
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2), floorMat)
+    floor.visible = false // until the first floor texture arrives (a bare MeshBasicMaterial would render white)
     floor.visible = false
     scene.add(floor)
 
@@ -353,6 +354,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         tex.anisotropy = 4
         floorMat.map = tex
         floorMat.needsUpdate = true
+        floor.visible = true
         old?.dispose()
         floor.scale.set(m.w * m.res, 1, m.h * m.res)
         floor.position.set(m.origin[0] + (m.w * m.res) / 2, 0, -(m.origin[1] + (m.h * m.res) / 2))
@@ -569,7 +571,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         plume.sync(P.trail, P.until ?? wall)
         if (live) plume.step(dt, null, wall)
         const moved = display.tick(tnow, live)
-        if (moved || tnow - plumeAt > 400) {
+        if (moved || tnow - plumeAt > 400) try {
           plumeAt = tnow
           const m = floorBase.meta, top = m.origin[1] + m.h * m.res
           if (floorCanvas.width !== m.w || floorCanvas.height !== m.h) { floorCanvas.width = m.w; floorCanvas.height = m.h; bloomCanvas.width = m.w; bloomCanvas.height = m.h }
@@ -617,6 +619,9 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
           g.setAttribute('aAlpha', new THREE.BufferAttribute(Float32Array.from(ha), 1))
           g.setAttribute('aPhase', new THREE.BufferAttribute(Float32Array.from(hp), 1))
           haze.geometry.dispose(); haze.geometry = g
+        } catch (err) {
+          console.warn('floor compose failed; keeping the base floor', err)
+          api.current?.setFloor(floorBase.canvas, floorBase.meta)
         }
         haze.visible = P.layers.gas
       } else haze.visible = false
@@ -698,8 +703,12 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     const img = g.createImageData(meta.w, meta.h)
     const col = new THREE.Color(theme.floor3d)
     const [fr, fg, fb] = [col.r, col.g, col.b].map((v) => Math.round(v * 255))
+    // the backend's PNG encodes free/occupied/unknown in alpha; an image without any transparent
+    // pixel carries no such layout, so the whole plan is treated as floor rather than left white
+    let anyUnknown = false
+    for (let i = 3; i < data.length; i += 4) if (data[i] === 0) { anyUnknown = true; break }
     for (let i = 0; i < meta.w * meta.h; i++) {
-      if (data[i * 4 + 3] > 240) { img.data[i * 4] = fr; img.data[i * 4 + 1] = fg; img.data[i * 4 + 2] = fb; img.data[i * 4 + 3] = 255 }
+      if (!anyUnknown || data[i * 4 + 3] > 240) { img.data[i * 4] = fr; img.data[i * 4 + 1] = fg; img.data[i * 4 + 2] = fb; img.data[i * 4 + 3] = 255 }
     }
     g.putImageData(img, 0, 0)
     const top = meta.origin[1] + meta.h * meta.res
@@ -722,6 +731,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       if (kg) api.current.setField(kg, (i) => (kg.den[i] > 0 ? kg.num[i] / kg.den[i] : NaN), (i) => kg.den[i] >= 0.3, (i) => Math.min(1, kg.den[i] / 0.9), isFree, 0.2 * SCALE.bands[0])
       else api.current.setField(null)
     }
+    api.current.setFloor(c, meta) // granite (and fog) right away; the tick overlays the field and splats
     api.current.setFloorBase(c, meta)
   }, [meta, theme, heat, layers.gas, layers.uncertainty, field])
 

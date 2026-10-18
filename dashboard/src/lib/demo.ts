@@ -396,6 +396,14 @@ export function createDemoSource(): DataSource {
       return canvas
     },
 
+    async sessions() {
+      const m = mapMeta()
+      return [{
+        session: `demo-crew-${crew}`, name: 'Simulated walk', notes: null, saved: true, started: iso(0), ended: iso(t),
+        n: readings.length, map_png_url: canvas.toDataURL('image/png'), map: { origin: m.origin, res: m.res, w: m.w, h: m.h },
+      }]
+    },
+
     async warnings() {
       return { threshold: 100, unit: 'index' as const, voice: 'browser' as const, gemini: false, items: warnings.slice(0, 20) }
     },
