@@ -40,6 +40,7 @@ services:
       - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ./dashboard/dist:/usr/share/nginx/html:ro
       - certbot-etc:/etc/letsencrypt:ro
+      - ./deploy/certbot/www:/var/www/certbot:ro
     depends_on:
       - api
     restart: unless-stopped
