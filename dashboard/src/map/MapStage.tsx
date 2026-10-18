@@ -95,7 +95,8 @@ export default function MapStage(props: StageProps) {
   const [horizon, setHorizon] = useState<number | null>(null)
   const gas = props.gas ?? null
   const model = gas?.source ?? null
-  const r = { ...props, recenter, onMoved, model, gas, horizon: mode === '2d' && props.layers.gas ? horizon : null }
+  const hasSource = !!model?.sources.some((src) => src.q >= SCALE.bands[0]) // forecasts only mean something with a real source
+  const r = { ...props, recenter, onMoved, model, gas, horizon: mode === '2d' && hasSource && props.layers.gas ? horizon : null }
   return (
     <>
       {mode === '2d' ? <MapView {...r} /> : <Suspense fallback={null}><Map3D {...r} firstPerson={mode === 'fp'} /></Suspense>}
@@ -121,7 +122,7 @@ export default function MapStage(props: StageProps) {
             {props.follow ? 'Following' : 'Follow'} {responderLabel(props.crew, props.selected)}
           </button>
         )}
-        {mode === '2d' && props.layers.gas && gas?.forecast && (
+        {mode === '2d' && props.layers.gas && gas?.forecast && hasSource && (
           <div className="map-seg" role="group" aria-label="Forecast" title="Projected spread by diffusion through the mapped floor plan (no airflow model)">
             <button className={horizon == null ? 'on' : ''} onClick={() => setHorizon(null)}>Now</button>
             {HORIZONS.map((h) => (

@@ -45,7 +45,8 @@ a.brand { color: inherit; text-decoration: none; cursor: pointer; pointer-events
 .status .dot { color: var(--muted); }
 .status--live .dot { color: var(--live); box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 22%, transparent); }
 .status--demo .dot { color: var(--moderate); }
-.status--replay .dot { color: var(--accent, #4f8cff); }
+.status--replay .dot, .status--review .dot { color: var(--accent, #4f8cff); }
+.status--restart .dot { color: var(--moderate); animation: blink 1.2s infinite; }
 .status--offline .dot, .status--nopi .dot { animation: blink 1.2s infinite; }
 @keyframes blink { 50% { opacity: 0.25; } }
 
@@ -206,6 +207,9 @@ a.brand { color: inherit; text-decoration: none; cursor: pointer; pointer-events
 .tile--warn .tile-value { color: var(--alert); }
 .tile--next .tile-value { color: var(--good); }
 .tiles-note { grid-column: 1 / -1; font-size: 11px; color: var(--muted); }
+.tile-note { font-size: 11px; line-height: 1.35; color: var(--muted); max-width: 150px; }
+.tile:has(.tile-note) { grid-column: 1 / -1; }
+.tile:has(.tile-note) .tile-note { max-width: 330px; }
 .tiles-warm { color: var(--moderate); }
 .playback { box-shadow: none; animation: none; }
 .playback.on { background: var(--text); color: var(--bg); border-color: transparent; }
@@ -226,8 +230,49 @@ a.brand { color: inherit; text-decoration: none; cursor: pointer; pointer-events
 .map-seg + .map-seg { margin-left: 2px; }
 .source-toggle { box-shadow: none; }
 
+/* ---- scans: save / restart popovers, catalog drawer ------------------------ */
+.map-btn.solid, .map-btn.on { background: var(--text); color: var(--bg); border-color: transparent; }
+.pop-anchor { position: relative; }
+.pop {
+  position: absolute; right: 0; top: calc(100% + 10px); z-index: 12; width: 300px; padding: 16px 18px 14px;
+  border-radius: 14px; background: var(--pop); border: 1px solid var(--line); box-shadow: 0 20px 60px rgba(0,0,0,.4);
+  display: flex; flex-direction: column; gap: 10px; font-size: 13px; animation: fade .15s ease-out;
+}
+.pop strong { font-size: 14px; font-weight: 600; }
+.pop p { margin: 0; line-height: 1.45; }
+.field {
+  font: inherit; color: var(--text); background: color-mix(in srgb, var(--text) 6%, transparent); border: 1px solid var(--line);
+  border-radius: 10px; padding: 9px 12px; outline: none;
+}
+.field:focus { border-color: color-mix(in srgb, var(--text) 40%, transparent); }
+.pop-actions { display: flex; justify-content: flex-end; align-items: center; gap: 14px; margin-top: 2px; }
+.pop-actions .map-btn { height: 34px; box-shadow: none; animation: none; }
+
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; z-index: 30; width: 380px; max-width: 100vw; overflow-y: auto;
+  background: color-mix(in srgb, var(--pop) 92%, transparent); backdrop-filter: blur(14px); border-left: 1px solid var(--line);
+  box-shadow: -20px 0 60px rgba(0,0,0,.35); animation: slide .2s ease-out;
+}
+@keyframes slide { from { transform: translateX(16px); opacity: 0; } }
+.drawer-head { position: sticky; top: 0; display: flex; justify-content: space-between; align-items: center; padding: 22px 24px 14px;
+  background: inherit; font-size: 15px; }
+.drawer-note { margin: 8px 24px; font-size: 13px; }
+.scan-list { list-style: none; margin: 0; padding: 4px 12px 24px; display: flex; flex-direction: column; gap: 4px; }
+.scan { display: flex; gap: 14px; align-items: center; width: 100%; padding: 10px 12px; border-radius: 12px; text-align: left;
+  border: 1px solid transparent; }
+.scan:hover { background: color-mix(in srgb, var(--text) 5%, transparent); }
+.scan.on { border-color: var(--line); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.scan-thumb { flex: none; width: 72px; height: 54px; border-radius: 8px; overflow: hidden; background: #0f141c; display: grid; place-items: center; }
+.scan-thumb img { width: 100%; height: 100%; object-fit: contain; filter: invert(1) brightness(1.1); image-rendering: pixelated; }
+.scan-thumb i { width: 22px; height: 16px; border: 1px dashed var(--line); border-radius: 3px; }
+.scan-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.scan-name { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scan-name em { font-style: normal; font-weight: 500; color: var(--good); }
+.scan-meta { font-size: 11px; color: var(--muted); }
+.scan-notes { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (prefers-reduced-motion: reduce) { .drawer, .pop { animation: none; } }
+
 /* ---- layers, follow --------------------------------------------------------- */
-.map-btn.on { background: var(--text); color: var(--bg); border-color: transparent; }
 .map-canvas.picking, .map-3d.picking canvas { cursor: crosshair; }
 .layers { position: relative; }
 .layers-count { margin-left: 2px; font-size: 11px; opacity: .65; }

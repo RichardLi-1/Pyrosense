@@ -38,7 +38,7 @@ export function runGasModel(req: GasRequest): GasModel {
   const t3 = performance.now()
   const fc = source && field ? runForecast(g, field, source.sources, sourceProb, source.base, source.L) : null
   const t4 = performance.now()
-  const next = field ? nextSampleCandidates(g, field, sourceProb) : []
+  const next = field ? nextSampleCandidates(g, field, sourceProb, req.obs) : []
   const t5 = performance.now()
   return { source, field, sourceProb, forecast: fc, next,
            ms: { source: t1 - t0, field: t2 - t1, posterior: t3 - t2, forecast: t4 - t3, next: t5 - t4 } }

@@ -3,7 +3,7 @@ import { SCALE } from '../lib/colors'
 import { bandImage, isolines, kernelGrid, layerGrid, strokeIsolines, type HeatImage, type Isoline } from '../lib/heatImage'
 import { predict, predictedOnly } from '../lib/predict'
 import { drawMark, markKind } from '../lib/marks'
-import { chooseNext } from '../lib/nextSample'
+import { chooseNext, explainNext } from '../lib/nextSample'
 import { DEFAULT_WEARER, responderLabel } from '../lib/types'
 import { uncertaintyImage } from '../lib/uncertainty'
 import { drawHardHat } from './theme'
@@ -104,27 +104,6 @@ export default function MapView(props: RendererProps) {
   const fog = useRef<HeatImage | null>(null)
   useEffect(() => { fog.current = gas?.field ? uncertaintyImage(gas.field) : null }, [gas])
 
-  // Source posterior: a soft haze where the gas most likely comes from.
-  const haze = useRef<HeatImage | null>(null)
-  useEffect(() => {
-    const sp = gas?.sourceProb
-    if (!sp || !sp.peak) { haze.current = null; return }
-    const g = layerGrid(sp, sp.prob, null, 0.1) // bilinear upsample so the haze is soft, not blocky
-    const canvas = document.createElement('canvas')
-    canvas.width = g.cols; canvas.height = g.rows
-    const ctx = canvas.getContext('2d')!
-    const img = ctx.createImageData(g.cols, g.rows)
-    const [cr, cg, cb] = [255, 77, 94]
-    for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) {
-      const p = g.num[r * g.cols + c] / sp.peak
-      if (!(p > 0.04)) continue
-      const o = ((g.rows - 1 - r) * g.cols + c) * 4
-      img.data[o] = cr; img.data[o + 1] = cg; img.data[o + 2] = cb; img.data[o + 3] = Math.round(255 * 0.5 * Math.min(1, p) ** 1.5)
-    }
-    ctx.putImageData(img, 0, 0)
-    haze.current = { canvas, x0: g.x0, y1: g.y0 + g.rows * g.res, w: g.cols * g.res, h: g.rows * g.res }
-  }, [gas])
-
   useEffect(() => {
     if (recenter) { manual.current = false; onMoved(false) }
   }, [recenter, onMoved])
@@ -139,6 +118,7 @@ export default function MapView(props: RendererProps) {
     const stripes = stripePattern(pctx)
     let raf = 0
     let cam: Camera | null = null
+    let marker: { x: number; y: number; text: string } | null = null // next-sample marker on screen, for its tooltip
     const shown = new Map<string, { x: number; y: number; h: number }>()
     const seenAlerts = new Set<string>()
     const rings: { x: number; y: number; t0: number }[] = []
@@ -290,15 +270,6 @@ export default function MapView(props: RendererProps) {
         ctx.drawImage(layer, 0, 0)
         ctx.restore()
       }
-      // where the source most likely is
-      const hz = haze.current
-      if (P.layers.source && hz && P.horizon == null) {
-        ctx.save()
-        ctx.globalCompositeOperation = T.heatBlend
-        ctx.imageSmoothingEnabled = true
-        ctx.drawImage(hz.canvas, sx(hz.x0), sy(hz.y1), hz.w * c.scale, hz.h * c.scale)
-        ctx.restore()
-      }
       if (P.layers.source && P.model && P.horizon == null) {
         ctx.save()
         ctx.setLineDash([3, 4])
@@ -308,7 +279,7 @@ export default function MapView(props: RendererProps) {
         ctx.font = '500 10px Inter, system-ui, sans-serif'
         ctx.textAlign = 'center'
         for (const src of P.model.sources) {
-          if (src.q < 120) continue
+          if (src.q < SCALE.bands[0]) continue // a blip below the moderate band is not a source
           const x = sx(src.x), y = sy(src.y), r = 0.9 * c.scale
           ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke()
           ctx.fillText('likely source', x, y - r - 6)
@@ -317,21 +288,25 @@ export default function MapView(props: RendererProps) {
       }
       // where a reading would help most (GP variance), from where the selected wearer stands
       const nx = P.gas && P.horizon == null ? chooseNext(P.gas.next, me ?? P.pose, P.gas.field) : null
-      if (P.layers.next && nx) {
+      if (P.layers.next && nx && P.gas) {
         const x = sx(nx.x), y = sy(nx.y), r = Math.max(8, nx.r * c.scale)
+        marker = { x, y, text: explainNext(nx, P.gas.field!, me ?? P.pose) }
         ctx.save()
         ctx.strokeStyle = T.next
         ctx.fillStyle = T.next
-        ctx.lineWidth = 1.5
-        ctx.setLineDash([2, 3])
+        // thin ring for the region, a small × at the point, label above
+        ctx.globalAlpha = 0.35
+        ctx.lineWidth = 1
         ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke()
-        ctx.setLineDash([])
-        ctx.beginPath(); ctx.moveTo(x - 4, y); ctx.lineTo(x + 4, y); ctx.moveTo(x, y - 4); ctx.lineTo(x, y + 4); ctx.stroke()
+        ctx.globalAlpha = 1
+        ctx.lineWidth = 2
+        ctx.lineCap = 'round'
+        ctx.beginPath(); ctx.moveTo(x - 5, y - 5); ctx.lineTo(x + 5, y + 5); ctx.moveTo(x - 5, y + 5); ctx.lineTo(x + 5, y - 5); ctx.stroke()
         ctx.font = '500 10px Inter, system-ui, sans-serif'
         ctx.textAlign = 'center'
-        ctx.fillText('sample next', x, y - r - 6)
+        ctx.fillText('sample next', x, y - 10)
         ctx.restore()
-      }
+      } else marker = null
 
       // trails: the last 90 s per wearer, fading with age (the heat carries VOC)
       const byWearer = new Map<string, typeof P.trail>()
@@ -451,6 +426,12 @@ export default function MapView(props: RendererProps) {
     let down: { x: number; y: number } | null = null
     const onDown = (e: MouseEvent) => { drag = down = pt(e) }
     const onMove = (e: MouseEvent) => {
+      if (e.target === canvas) { // the next-sample marker explains itself on hover
+        const q = pt(e)
+        const near = marker && Math.hypot(q.x - marker.x, q.y - marker.y) < 14
+        const tip = near ? `Sample next: ${marker!.text}` : ''
+        if (canvas.title !== tip) canvas.title = tip
+      }
       if (!drag || !cam) return
       const q = pt(e)
       if (q.x === drag.x && q.y === drag.y) return

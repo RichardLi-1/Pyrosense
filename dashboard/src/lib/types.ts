@@ -41,15 +41,36 @@ export const DEFAULT_WEARER = 'A'
 export const responderLabel = (crew: string[], id: string) => { const i = crew.indexOf(id); return i >= 0 ? `FF-${i + 1}` : id }
 export type Summary = { text: string; source: 'gemini' | 'fallback' }
 
+/** A past (or the current) scan as the backend catalogs it: GET /sessions. */
+export type ScanSession = {
+  session: string
+  name: string | null
+  notes: string | null
+  saved: boolean
+  started: string
+  ended: string | null
+  n: number // readings
+  map_png_url: string | null
+  map: { origin: [number, number]; res: number; w: number; h: number } | null
+}
+export type RestartResult = { session: string; previous: string | null; previous_saved: boolean; pi: { url: string; ok: boolean; error: string | null } }
+export type SaveResult = { session: string; name: string | null; saved: boolean; has_map: boolean }
+
 /** Where the dashboard's data comes from: the backend, or the in-browser demo. */
 export interface DataSource {
   readonly kind: 'live' | 'demo'
   connect(onEvent: (e: LiveEvent) => void, onStatus: (open: boolean) => void): () => void
-  heatmap(until: number | null): Promise<HeatCell[]>
-  trail(until: number | null): Promise<TrailPoint[]>
-  alerts(): Promise<Alert[]>
+  /** `session` selects a past scan; omitted = the live one. */
+  heatmap(until: number | null, session?: string): Promise<HeatCell[]>
+  trail(until: number | null, session?: string): Promise<TrailPoint[]>
+  alerts(session?: string): Promise<Alert[]>
   summary(force: boolean): Promise<Summary>
-  mapImage(meta: MapMeta): Promise<CanvasImageSource>
+  /** The floor plan: for the live map from its meta, or any map PNG by url. */
+  mapImage(meta: MapMeta | { url: string }): Promise<CanvasImageSource>
+  /** Scan catalog; only the backend has one. */
+  sessions?(): Promise<ScanSession[]>
+  restart?(name?: string): Promise<RestartResult>
+  save?(name?: string, notes?: string): Promise<SaveResult>
 }
 
 export const CELL_SIZE = 0.2 // metres, matches voc_cells in db/schema.sql

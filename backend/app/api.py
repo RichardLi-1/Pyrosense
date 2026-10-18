@@ -137,6 +137,7 @@ async def restart_session(req: Request, body: RestartBody | None = None):
     new = (_slug(body.name) if body and body.name else None) or auto_session()
     a.live.new_session(new)
     a.live.tracker.reset()  # the Pi restarts with an empty list, so all points after this are new
+    a.ingest._backlog_checked = True  # new session has no stored rows; ingest everything that arrives
     a.live.map = None
     a.alerts.reset()
     a.bus.publish(a.live.hello_event(a.alerts.threshold, a.settings.voc_unit))

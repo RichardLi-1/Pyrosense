@@ -44,7 +44,7 @@ SELECT r.session, r.started, r.ended, r.n, m.name, m.notes, m.saved_at, m.map_pn
        m.map_origin_x, m.map_origin_y, m.map_res, m.map_w, m.map_h
 FROM (SELECT session, min(ts) AS started, max(ts) AS ended, count(*) AS n FROM readings GROUP BY session) r
 LEFT JOIN sessions_meta m USING (session)
-ORDER BY r.started DESC
+ORDER BY r.ended DESC
 """
 
 TOP_CELLS_SQL = """
@@ -217,6 +217,10 @@ class Database:
             "map_res = COALESCE(EXCLUDED.map_res, sessions_meta.map_res), "
             "map_w = COALESCE(EXCLUDED.map_w, sessions_meta.map_w), map_h = COALESCE(EXCLUDED.map_h, sessions_meta.map_h)",
             session, name, notes, map_png, ox, oy, res, w, h)
+
+    async def count_readings(self, session: str) -> int:
+        pool = self._require()
+        return int(await pool.fetchval("SELECT count(*) FROM readings WHERE session = $1", session))
 
     async def session_map_png(self, session: str) -> bytes | None:
         pool = self._require()

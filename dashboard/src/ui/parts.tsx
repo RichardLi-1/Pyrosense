@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { LEVEL_LABEL, SCALE, level, levelColor } from '../lib/colors'
 import { responderLabel, type Sensor } from '../lib/types'
-import { bearing, chooseNext } from '../lib/nextSample'
+import { bearing, chooseNext, explainNext } from '../lib/nextSample'
 import type { GasModel } from '../lib/gasModel'
 import { sampleAt } from '../lib/gasModel'
 import type { Dashboard } from '../lib/useDashboard'
@@ -64,9 +64,10 @@ export function AlertBanner({ alerts, now, holdMs = 30_000, crew = [] }: { alert
 }
 
 export function Status({ s }: { s: Dashboard }) {
-  const state = s.until != null ? 'replay' : !s.connected ? 'offline' : s.kind === 'demo' ? 'demo' : !s.bridge ? 'nopi' : 'live'
-  const text = { replay: 'Replay', offline: 'Reconnecting…', demo: 'Simulation', nopi: 'Waiting for device', live: 'Live' }[state]
-  return <span className={`status status--${state}`}><i className="dot" />{text}</span>
+  if (s.reviewing) return <span className="status status--review"><i className="dot" />Review · {s.reviewing.name || s.reviewing.session}</span>
+  const state = s.restarting ? 'restart' : s.until != null ? 'replay' : !s.connected ? 'offline' : s.kind === 'demo' ? 'demo' : !s.bridge ? 'nopi' : 'live'
+  const text = { restart: 'Restarting scan…', replay: 'Replay', offline: 'Reconnecting…', demo: 'Simulation', nopi: 'Waiting for device', live: 'Live' }[state]
+  return <span className={`status status--${state}`}><i className="dot" />{s.notice ?? text}</span>
 }
 
 /** Simulation / Real: which data feeds the dashboard. Real is the backend and the wearable. */
@@ -96,20 +97,23 @@ const clock = (ms: number) =>
  * Session timeline. Drag to replay; release at the right edge to go live.
  * With `history`, it doubles as the session's VOC strip, with alerts as ticks.
  */
-export function Timeline({ s, now, setUntil, history, alerts }: {
+export function Timeline({ s, now, setUntil, history, alerts, end, onLive }: {
   s: Dashboard; now: number; setUntil: (t: number | null) => void; history?: TrailPoint[]; alerts?: Alert[]
+  end?: number // a finished scan: the track spans start..end instead of start..now
+  onLive?: { label: string; go: () => void } // what the right-hand action does (default: back to live)
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState(false)
   const start = s.started ?? now - 60_000
-  const span = Math.max(1, now - start)
-  const at = s.until ?? now
+  const last = end ?? now
+  const span = Math.max(1, last - start)
+  const at = s.until ?? last
   const frac = Math.min(1, (at - start) / span)
 
   const fromEvent = (clientX: number) => {
     const r = ref.current!.getBoundingClientRect()
     const f = Math.min(1, Math.max(0, (clientX - r.left) / r.width))
-    setUntil(f > 0.985 ? null : start + f * span)
+    setUntil(f > 0.985 && end == null ? null : start + f * span)
   }
   useEffect(() => {
     if (!drag) return
@@ -132,9 +136,11 @@ export function Timeline({ s, now, setUntil, history, alerts }: {
       </div>
       <div className="timeline-labels">
         <span>{clock(start)}</span>
-        {s.until != null
-          ? <button className="link" onClick={() => setUntil(null)}>{clock(at)} · back to live</button>
-          : <span>Live</span>}
+        {onLive
+          ? <button className="link" onClick={onLive.go}>{clock(at)} · {onLive.label}</button>
+          : s.until != null
+            ? <button className="link" onClick={() => setUntil(null)}>{clock(at)} · back to live</button>
+            : <span>Live</span>}
       </div>
     </div>
   )
@@ -190,7 +196,8 @@ export function SummaryButton({ s, load }: { s: Dashboard; load: (force?: boolea
 
 export function Waiting({ s }: { s: Dashboard }) {
   if (s.meta) return null
-  return <div className="waiting">{s.connected ? 'Waiting for the first scan…' : 'Connecting…'}</div>
+  if (s.reviewing) return <div className="waiting">This scan has no floor plan.</div>
+  return <div className="waiting">{s.restarting ? 'Restarting scan…' : s.connected ? 'Waiting for the first scan…' : 'Connecting…'}</div>
 }
 
 const deg = (r: number) => `${Math.round((r * 180) / Math.PI)}°`
@@ -287,12 +294,13 @@ export function Outlook({ s, gas }: { s: Dashboard; gas: GasModel | null }) {
   )
 }
 
-function Tile({ caption, value, unit, title, tone, spark }: { caption: string; value: string; unit?: string; title?: string; tone?: 'warn' | 'next'; spark?: [number, number][] }) {
+function Tile({ caption, value, unit, title, tone, spark, note }: { caption: string; value: string; unit?: string; title?: string; tone?: 'warn' | 'next'; spark?: [number, number][]; note?: string }) {
   return (
     <div className={`tile${tone ? ` tile--${tone}` : ''}`} title={title}>
       <span className="caption">{caption}</span>
       <span className="tile-value mono">{value}{unit && <span className="tile-unit">{unit}</span>}</span>
       {spark && <Sparkline points={spark} width={150} height={22} color="var(--signal, #7dd3fc)" />}
+      {note && <span className="tile-note">{note}</span>}
     </div>
   )
 }
@@ -322,9 +330,10 @@ export function SensorTiles({ s, gas }: { s: Dashboard; gas: GasModel | null }) 
       {eta != null
         ? <Tile caption="Projected" value={`≤${eta / 60}`} unit="min to alert" tone="warn" title={`Forecast to pass ${s.threshold} here`} />
         : peak != null && <Tile caption="Projected" value={peak.toFixed(0)} unit="in 5 min" title="Diffusion forecast at this position" />}
-      {nx && <Tile caption="Sample next" value={s.pose ? nx.dist.toFixed(0) : `${nx.x.toFixed(0)}, ${nx.y.toFixed(0)}`}
+      {nx && gas?.field && <Tile caption="Sample next" value={s.pose ? nx.dist.toFixed(0) : `${nx.x.toFixed(0)}, ${nx.y.toFixed(0)}`}
                    unit={s.pose ? `m ${bearing(s.pose, nx)}` : undefined} tone="next"
-                   title="Where one more reading would most reduce the map's uncertainty" />}
+                   title="Where one more reading would most reduce the map's uncertainty"
+                   note={explainNext(nx, gas.field, s.pose).split(' · ').slice(1).join(' · ') || undefined} />}
       {sensor && (sensor.temperature != null || sensor.humidity != null || !sensor.warmed_up) && (
         <span className="tiles-note">
           {sensor.temperature != null && <>{sensor.temperature.toFixed(1)} °C</>}

@@ -1,7 +1,7 @@
 // All dashboard state in one place: the live event stream (one or more wearers),
 // polled heat map, trail, alerts, summary, and replay (`until`). Designs only render it.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Alert, DataSource, HeatCell, LiveEvent, MapMeta, Pose, Sensor, Summary, TrailPoint, VocUnit } from './types'
+import type { Alert, DataSource, HeatCell, LiveEvent, MapMeta, Pose, ScanSession, Sensor, Summary, TrailPoint, VocUnit } from './types'
 import { DEFAULT_WEARER } from './types'
 import { configureScale } from './colors'
 
@@ -29,7 +29,26 @@ type State = {
   until: number | null // null = live
   summary: Summary | null
   summaryLoading: boolean
+  restarting: boolean // a scan restart was requested and the new map hasn't arrived yet
+  notice: string | null // short confirmation shown in the header (saved, restarted, failed)
+  review: Review | null // a past scan being looked at instead of the live one
 }
+
+/** A past scan loaded for review: its own map, readings and scrub position; live state stays untouched underneath. */
+export type Review = {
+  scan: ScanSession
+  started: number
+  ended: number
+  meta: MapMeta | null
+  image: CanvasImageSource | null
+  alerts: Alert[]
+  heat: HeatCell[]
+  trail: TrailPoint[]
+  history: TrailPoint[]
+  until: number
+  loading: boolean
+}
+export const scanLabel = (scan: ScanSession) => scan.name || scan.session
 
 /** What designs render: State plus the selected wearer's pose/reading, and every wearer's pose. */
 export type Dashboard = State & {
@@ -37,6 +56,7 @@ export type Dashboard = State & {
   voc: number | null
   window: [number, number][]
   poses: { id: string; pose: Pose }[]
+  reviewing: ScanSession | null // set while a past scan is shown
 }
 
 const WINDOW_MS = 60_000
@@ -69,7 +89,7 @@ export function useDashboard(source: DataSource) {
   const [s, set] = useState<State>({
     kind: source.kind, connected: false, bridge: false, session: '', started: null, threshold: 2200, unit: 'ppb', sensor: null, sensorWindow: emptySensorWindow(),
     crew: [], wearers: {}, selected: null, meta: null, image: null, alerts: [], heat: [], trail: [], history: [],
-    until: null, summary: null, summaryLoading: false,
+    until: null, summary: null, summaryLoading: false, restarting: false, notice: null, review: null,
   })
   const untilRef = useRef<number | null>(null)
   useEffect(() => { untilRef.current = s.until }, [s.until])
@@ -82,14 +102,22 @@ export function useDashboard(source: DataSource) {
         case 'hello': {
           const id = e.wearers?.[0] ?? DEFAULT_WEARER
           configureScale(e.unit)
-          set((p) => withWearer({ ...p, session: e.session, started: Date.parse(e.started), threshold: e.threshold,
-                                  unit: e.unit ?? 'ppb', sensor: e.sensor ?? p.sensor,
-                                  bridge: e.bridge_connected, crew: e.wearers ?? p.crew },
-                                id, (w) => ({ ...w, window: e.voc_window.map(([t, v]) => [t * 1000, v]) })))
+          set((p) => {
+            // a different session id means the scan was restarted: drop everything from the old one
+            const fresh = p.session && p.session !== e.session
+            const base: State = fresh
+              ? { ...p, meta: null, image: null, alerts: [], heat: [], trail: [], history: [], wearers: {}, crew: [], selected: null,
+                  sensorWindow: emptySensorWindow(), summary: null, until: null }
+              : p
+            return withWearer({ ...base, session: e.session, started: Date.parse(e.started), threshold: e.threshold,
+                                unit: e.unit ?? 'ppb', sensor: e.sensor ?? base.sensor,
+                                bridge: e.bridge_connected, crew: e.wearers ?? base.crew },
+                              id, (w) => ({ ...w, window: e.voc_window.map(([t, v]) => [t * 1000, v]) }))
+          })
           break
         }
         case 'map':
-          set((p) => ({ ...p, meta: e }))
+          set((p) => ({ ...p, meta: e, restarting: false }))
           if (mapBusy) break
           mapBusy = true
           source.mapImage(e).then((image) => set((p) => ({ ...p, image })))
@@ -151,9 +179,12 @@ export function useDashboard(source: DataSource) {
   }, [source, s.session, s.until])
 
   const setUntil = useCallback((until: number | null) => {
-    untilRef.current = until
-    set((p) => ({ ...p, until }))
-    if (until == null) source.trail(null).then((trail) => set((p) => ({ ...p, trail }))).catch(() => {})
+    set((p) => {
+      if (p.review) return { ...p, review: { ...p.review, until: until ?? p.review.ended } } // a review never goes "live"
+      untilRef.current = until
+      return { ...p, until }
+    })
+    if (until == null) source.trail(null).then((trail) => set((p) => (p.review ? p : { ...p, trail }))).catch(() => {})
   }, [source])
 
   const loadSummary = useCallback((force = false) => {
@@ -165,28 +196,99 @@ export function useDashboard(source: DataSource) {
 
   const select = useCallback((id: string) => set((p) => ({ ...p, selected: id })), [])
 
+  // short header notice, cleared after a few seconds
+  const noticeTimer = useRef(0)
+  const notify = useCallback((notice: string | null) => {
+    clearTimeout(noticeTimer.current)
+    set((p) => ({ ...p, notice }))
+    if (notice) noticeTimer.current = window.setTimeout(() => set((p) => ({ ...p, notice: null })), 4000)
+  }, [])
+
+  /** Save the current scan (map snapshot) under a name. */
+  const saveScan = useCallback(async (name?: string, notes?: string) => {
+    if (!source.save) return
+    try {
+      const r = await source.save(name, notes)
+      notify(r.saved ? `Saved · ${r.name || r.session}` : 'Nothing to save yet')
+      return r
+    } catch { notify('Could not save the scan'); return undefined }
+  }, [source, notify])
+
+  /** Save the current scan, restart mapping on the device, and open a new session. */
+  const restartScan = useCallback(async (name?: string) => {
+    if (!source.restart) return
+    set((p) => ({ ...p, restarting: true, review: null }))
+    try {
+      const r = await source.restart(name)
+      notify(r.pi.ok ? `New scan ${r.session}` : `New scan ${r.session} · device not reached`)
+      return r
+    } catch { set((p) => ({ ...p, restarting: false })); notify('Could not restart the scan'); return undefined }
+  }, [source, notify])
+
+  const listScans = useCallback(() => (source.sessions ? source.sessions() : Promise.resolve([] as ScanSession[])), [source])
+
+  /** Look at a past scan: its map, readings and alerts, scrubbed to its end. */
+  const openReview = useCallback((scan: ScanSession) => {
+    const started = Date.parse(scan.started)
+    const ended = scan.ended ? Date.parse(scan.ended) : Date.now()
+    const meta: MapMeta | null = scan.map && scan.map_png_url
+      ? { url: scan.map_png_url, version: 0, origin: scan.map.origin, res: scan.map.res, w: scan.map.w, h: scan.map.h, free_area_m2: 0, ts: scan.ended ?? scan.started }
+      : null
+    set((p) => ({ ...p, review: { scan, started, ended, meta, image: null, alerts: [], heat: [], trail: [], history: [], until: ended, loading: true } }))
+    const id = scan.session
+    const still = (p: State) => p.review?.scan.session === id
+    if (meta) source.mapImage(meta).then((image) => set((p) => (still(p) ? { ...p, review: { ...p.review!, image } } : p))).catch(() => {})
+    Promise.all([source.alerts(id), source.trail(null, id), source.heatmap(ended, id)])
+      .then(([alerts, history, heat]) => set((p) => (still(p) ? { ...p, review: { ...p.review!, alerts, history, trail: history, heat, loading: false } } : p)))
+      .catch(() => set((p) => (still(p) ? { ...p, review: { ...p.review!, loading: false } } : p)))
+  }, [source])
+
+  const closeReview = useCallback(() => set((p) => ({ ...p, review: null })), [])
+
+  // scrubbing inside a review: refetch that scan's heat and trail up to `until`
+  const reviewUntil = s.review?.until, reviewId = s.review?.scan.session
+  useEffect(() => {
+    if (!reviewId || reviewUntil == null) return
+    let cancelled = false
+    const id = window.setTimeout(() => {
+      Promise.all([source.heatmap(reviewUntil, reviewId), source.trail(reviewUntil, reviewId)])
+        .then(([heat, trail]) => { if (!cancelled) set((p) => (p.review?.scan.session === reviewId ? { ...p, review: { ...p.review, heat, trail } } : p)) })
+        .catch(() => {})
+    }, 150)
+    return () => { cancelled = true; clearTimeout(id) }
+  }, [source, reviewId, reviewUntil])
+
+  // What designs see: the live state, or the reviewed scan laid over it (map, readings, scrub position).
+  const R = s.review
+  const base: State = R
+    ? { ...s, session: R.scan.session, started: R.started, meta: R.meta, image: R.image, alerts: R.alerts, heat: R.heat,
+        trail: R.trail, history: R.history, until: R.until, wearers: {}, crew: [...new Set(R.history.map((t) => t.wearer ?? DEFAULT_WEARER))] }
+    : s
+
   // Poses: live, or in replay each wearer's last trail point at `until` (heading from the step before).
   const poses: { id: string; pose: Pose }[] = []
-  for (const id of s.crew) {
-    if (s.until == null) {
-      const pose = s.wearers[id]?.pose
+  for (const id of base.crew) {
+    if (base.until == null) {
+      const pose = base.wearers[id]?.pose
       if (pose) poses.push({ id, pose })
       continue
     }
-    const mine = s.trail.filter((t) => (t.wearer ?? DEFAULT_WEARER) === id)
+    const mine = base.trail.filter((t) => (t.wearer ?? DEFAULT_WEARER) === id)
     const last = mine.at(-1), prev = mine.at(-2)
     if (last) poses.push({ id, pose: { ...last, heading: prev ? Math.atan2(last.y - prev.y, last.x - prev.x) : 0, wearer: id } })
   }
-  const sel = s.selected ?? s.crew[0] ?? DEFAULT_WEARER
+  const sel = (base.crew.includes(s.selected ?? '') ? s.selected : null) ?? base.crew[0] ?? DEFAULT_WEARER
   const selPose = poses.find((p) => p.id === sel)?.pose ?? null
   const view: Dashboard = {
-    ...s,
+    ...base,
     selected: sel,
     poses,
     pose: selPose,
-    voc: s.until != null ? selPose?.voc ?? null : s.wearers[sel]?.voc ?? null,
-    window: s.wearers[sel]?.window ?? [],
-    alerts: s.until != null ? s.alerts.filter((a) => Date.parse(a.ts) <= s.until!) : s.alerts,
+    voc: base.until != null ? selPose?.voc ?? null : base.wearers[sel]?.voc ?? null,
+    window: R ? [] : s.wearers[sel]?.window ?? [],
+    alerts: base.until != null ? base.alerts.filter((a) => Date.parse(a.ts) <= base.until!) : base.alerts,
+    reviewing: R?.scan ?? null,
   }
-  return { s: view, setUntil, loadSummary, select }
+  const scans = { supported: !!source.sessions, list: listScans, open: openReview, close: closeReview, save: saveScan, restart: restartScan }
+  return { s: view, setUntil, loadSummary, select, scans }
 }
