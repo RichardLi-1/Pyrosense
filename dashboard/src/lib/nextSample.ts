@@ -1,4 +1,4 @@
-// Layer 5: where to sample next, from the GP's own uncertainty.
+// Layer 5: gas movement prediction (where to sample next), from the GP's own uncertainty.
 //
 // Every passable cell the field knows about (conf > 0: within reach of at least one
 // reading, so the GP can say *something* about it) is scored

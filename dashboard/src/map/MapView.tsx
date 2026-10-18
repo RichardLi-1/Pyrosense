@@ -11,6 +11,14 @@ import { TRAIL_S, crewColor, growBox, insets, knownBounds, type Box, type Render
 
 type Camera = { cx: number; cy: number; scale: number } // metres, px per metre
 
+/** '#rrggbb' (or any CSS colour via a fallback) at the given alpha. */
+function hexA(color: string, a: number): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(color)
+  if (!m) return color
+  const n = parseInt(m[1], 16)
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`
+}
+
 const SIGMA_M = 0.3 // heat spreads ~1 m around each reading: hugs the path, no blobs
 
 /** Diagonal stripes, used to cut predicted areas so they read as "not measured". */
@@ -118,7 +126,7 @@ export default function MapView(props: RendererProps) {
     const stripes = stripePattern(pctx)
     let raf = 0
     let cam: Camera | null = null
-    let marker: { x: number; y: number; text: string } | null = null // next-sample marker on screen, for its tooltip
+    let marker: { x: number; y: number; r: number; text: string } | null = null // next-sample marker on screen, for its tooltip
     const shown = new Map<string, { x: number; y: number; h: number }>()
     const seenAlerts = new Set<string>()
     const rings: { x: number; y: number; t0: number }[] = []
@@ -290,21 +298,17 @@ export default function MapView(props: RendererProps) {
       const nx = P.gas && P.horizon == null ? chooseNext(P.gas.next, me ?? P.pose, P.gas.field) : null
       if (P.layers.next && nx && P.gas) {
         const x = sx(nx.x), y = sy(nx.y), r = Math.max(8, nx.r * c.scale)
-        marker = { x, y, text: explainNext(nx, P.gas.field!, me ?? P.pose) }
+        marker = { x, y, r, text: explainNext(nx, P.gas.field!, me ?? P.pose) }
         ctx.save()
-        ctx.strokeStyle = T.next
+        // a soft red haze over the region: strongest at the point, gone at the region's edge
+        const g = ctx.createRadialGradient(x, y, 0, x, y, r)
+        g.addColorStop(0, hexA(T.next, 0.25)); g.addColorStop(0.55, hexA(T.next, 0.12)); g.addColorStop(1, hexA(T.next, 0))
+        ctx.fillStyle = g
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill()
         ctx.fillStyle = T.next
-        // thin ring for the region, a small × at the point, label above
-        ctx.globalAlpha = 0.35
-        ctx.lineWidth = 1
-        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke()
-        ctx.globalAlpha = 1
-        ctx.lineWidth = 2
-        ctx.lineCap = 'round'
-        ctx.beginPath(); ctx.moveTo(x - 5, y - 5); ctx.lineTo(x + 5, y + 5); ctx.moveTo(x - 5, y + 5); ctx.lineTo(x + 5, y - 5); ctx.stroke()
         ctx.font = '500 10px Inter, system-ui, sans-serif'
         ctx.textAlign = 'center'
-        ctx.fillText('sample next', x, y - 10)
+        ctx.fillText('gas movement prediction', x, y - r - 6)
         ctx.restore()
       } else marker = null
 
@@ -428,8 +432,8 @@ export default function MapView(props: RendererProps) {
     const onMove = (e: MouseEvent) => {
       if (e.target === canvas) { // the next-sample marker explains itself on hover
         const q = pt(e)
-        const near = marker && Math.hypot(q.x - marker.x, q.y - marker.y) < 14
-        const tip = near ? `Sample next: ${marker!.text}` : ''
+        const near = marker && Math.hypot(q.x - marker.x, q.y - marker.y) < marker.r
+        const tip = near ? `Gas movement prediction: ${marker!.text}` : ''
         if (canvas.title !== tip) canvas.title = tip
       }
       if (!drag || !cam) return

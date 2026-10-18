@@ -247,7 +247,7 @@ export function SensorPanel({ sensor }: { sensor: Sensor | null }) {
 /**
  * Layer 4, what it means for the wearer: cumulative exposure this session (ppb·min, the
  * integral of the reading over time), from the forecast whether this spot is projected
- * to cross the alert threshold within five minutes, and where to sample next (GP variance).
+ * to cross the alert threshold within five minutes, and where the gas is predicted to move next (GP variance).
  */
 type OutlookNumbers = { dose: number | null; doseSeries: [number, number][]; eta: number | null; peak: number | null; next: ReturnType<typeof chooseNext> | null }
 function outlookNumbers(s: Dashboard, gas: GasModel | null): OutlookNumbers {
@@ -287,7 +287,7 @@ export function Outlook({ s, gas }: { s: Dashboard; gas: GasModel | null }) {
         ? <div className="sensor-row sensor-warn"><dt>projected</dt><dd>&gt; {SCALE.short ? `${s.threshold} ${SCALE.short}` : s.threshold} here in ≤{eta / 60} min</dd></div>
         : peak != null && <div className="sensor-row"><dt>projected</dt><dd className="mono">{peak.toFixed(0)}<span className="sensor-unit">{SCALE.short} in 5 min</span></dd></div>}
       {nx && <div className="sensor-row sensor-next" title="Where one more reading would most reduce the map's uncertainty (GP variance, weighted toward predicted-elevated areas)">
-        <dt>sample next</dt>
+        <dt>gas movement prediction</dt>
         <dd className="mono">{s.pose ? <>{nx.dist.toFixed(0)}<span className="sensor-unit">m {bearing(s.pose, nx)}</span></> : <>({nx.x.toFixed(0)}, {nx.y.toFixed(0)})</>}</dd>
       </div>}
     </dl>
@@ -308,7 +308,7 @@ function Tile({ caption, value, unit, title, tone, spark, note }: { caption: str
 /**
  * The secondary channels as big live numbers under the hero reading: the SGP30's other
  * outputs (eCO₂, raw H₂, raw ethanol) and what the session adds up to (exposure, the
- * five-minute projection at this spot, where to sample next).
+ * five-minute projection at this spot, gas movement prediction).
  */
 export function SensorTiles({ s, gas }: { s: Dashboard; gas: GasModel | null }) {
   const sensor = s.sensor
@@ -330,9 +330,9 @@ export function SensorTiles({ s, gas }: { s: Dashboard; gas: GasModel | null }) 
       {eta != null
         ? <Tile caption="Projected" value={`≤${eta / 60}`} unit="min to alert" tone="warn" title={`Forecast to pass ${s.threshold} here`} />
         : peak != null && <Tile caption="Projected" value={peak.toFixed(0)} unit="in 5 min" title="Diffusion forecast at this position" />}
-      {nx && gas?.field && <Tile caption="Sample next" value={s.pose ? nx.dist.toFixed(0) : `${nx.x.toFixed(0)}, ${nx.y.toFixed(0)}`}
+      {nx && gas?.field && <Tile caption="Gas movement prediction" value={s.pose ? nx.dist.toFixed(0) : `${nx.x.toFixed(0)}, ${nx.y.toFixed(0)}`}
                    unit={s.pose ? `m ${bearing(s.pose, nx)}` : undefined} tone="next"
-                   title="Where one more reading would most reduce the map's uncertainty"
+                   title="Where the gas is predicted to move next; one more reading there would most reduce the map's uncertainty"
                    note={explainNext(nx, gas.field, s.pose).split(' · ').slice(1).join(' · ') || undefined} />}
       {sensor && (sensor.temperature != null || sensor.humidity != null || !sensor.warmed_up) && (
         <span className="tiles-note">

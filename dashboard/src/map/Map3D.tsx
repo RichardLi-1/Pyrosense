@@ -166,7 +166,16 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     // next-best sample: a dotted ring with a crosshair, where the GP is least sure
     const nextGroup = new THREE.Group()
     scene.add(nextGroup)
-    const nextMat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.95 })
+    // soft red disc: a radial-gradient sprite texture on a floor-facing plane
+    const nextTex = (() => {
+      const c = document.createElement('canvas'); c.width = c.height = 128
+      const g = c.getContext('2d')!
+      const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64)
+      grad.addColorStop(0, 'rgba(255,255,255,0.25)'); grad.addColorStop(0.55, 'rgba(255,255,255,0.12)'); grad.addColorStop(1, 'rgba(255,255,255,0)')
+      g.fillStyle = grad; g.fillRect(0, 0, 128, 128)
+      const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t
+    })()
+    const nextMat = new THREE.MeshBasicMaterial({ map: nextTex, transparent: true, depthWrite: false, side: THREE.DoubleSide })
 
     // commander's annotations: always-on-top pins, constant screen size
     const markGroup = new THREE.Group()
@@ -358,13 +367,13 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         }
       },
       setNext(n) {
-        for (const c of [...nextGroup.children]) { nextGroup.remove(c); (c as THREE.Line).geometry.dispose() }
+        for (const c of [...nextGroup.children]) { nextGroup.remove(c); (c as THREE.Mesh).geometry.dispose() }
         if (!n) return
-        // a small × on the floor, in the alert red; no ring in 3D
-        const k = 0.22
-        const cross = [new THREE.Vector3(n.x - k, 0.05, -(n.y - k)), new THREE.Vector3(n.x + k, 0.05, -(n.y + k)),
-                       new THREE.Vector3(n.x - k, 0.05, -(n.y + k)), new THREE.Vector3(n.x + k, 0.05, -(n.y - k))]
-        nextGroup.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(cross), nextMat))
+        // a soft red disc on the floor over the region
+        const disc = new THREE.Mesh(new THREE.PlaneGeometry(n.r * 2, n.r * 2), nextMat)
+        disc.rotation.x = -Math.PI / 2
+        disc.position.set(n.x, 0.04, -n.y)
+        nextGroup.add(disc)
       },
       setMarks(marks) {
         for (const c of [...markGroup.children]) { markGroup.remove(c); (c as THREE.Sprite).material.dispose() }
