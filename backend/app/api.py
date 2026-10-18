@@ -86,6 +86,7 @@ async def set_session(req: Request, body: SessionBody):
     a = req.app.state
     a.live.new_session(body.session.strip())
     a.alerts.reset()
+    a.warnings.reset()
     a.bus.publish(a.live.hello_event(a.alerts.threshold, a.settings.voc_unit))
     return {"session": a.live.session}
 
@@ -142,6 +143,31 @@ async def restart_session(req: Request, body: RestartBody | None = None):
     a.alerts.reset()
     a.bus.publish(a.live.hello_event(a.alerts.threshold, a.settings.voc_unit))
     return {"session": new, "previous": old, "previous_saved": saved, "pi": pi}
+
+
+@router.get("/warnings")
+async def warnings(req: Request):
+    """Recent spoken warnings (newest first) and the engine settings."""
+    w = req.app.state.warnings
+    return {"threshold": w.threshold, "unit": w.unit, "voice": "elevenlabs" if w.eleven_key else "browser",
+            "gemini": w.gemini is not None, "items": list(w.recent)}
+
+
+@router.get("/warnings/{wid}/audio.mp3")
+async def warning_audio(req: Request, wid: str):
+    mp3 = req.app.state.warnings.audio.get(wid)
+    if not mp3:
+        raise HTTPException(404, "no audio for this warning")
+    return Response(mp3, media_type="audio/mpeg", headers={"Cache-Control": "public, max-age=3600"})
+
+
+@router.post("/warnings/test")
+async def warning_test(req: Request):
+    """Fire one warning now with the current reading (for demos and wiring checks)."""
+    a = req.app.state
+    voc = a.live.voc if a.live.voc is not None else max(a.settings.warn_threshold + 1, 150.0)
+    await a.warnings._fire(a.ingest._warning_context(float(voc)))
+    return a.warnings.recent[0]
 
 
 @router.get("/sessions")

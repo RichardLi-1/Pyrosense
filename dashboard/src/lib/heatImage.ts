@@ -2,7 +2,7 @@
 // ramp (cold navy for clean air, white-hot for gas), its opacity following how much
 // evidence each spot has, with fine contour hairlines and heavier lines at the
 // good / moderate / poor / hazardous thresholds.
-import { RAMP_BANDS, SCALE, level, rampColor, rampT, type Level } from './colors'
+import { RAMP_BANDS, SCALE, level, rampColor, rampMax, rampT, type Level } from './colors'
 import type { HeatCell } from './types'
 import { CELL_SIZE } from './types'
 
@@ -151,7 +151,7 @@ const CASES: number[][] = [[], [3, 0], [0, 1], [3, 1], [1, 2], [3, 2, 0, 1], [0,
 /** Contour values: the three thresholds plus fine levels spaced evenly along the ramp. */
 function contourLevels(): { v: number; major: boolean }[] {
   const [a, b, c] = SCALE.bands
-  const edges = [0, a, b, c, SCALE.max]
+  const edges = [0, a, b, c, rampMax()]
   const stops = [...RAMP_BANDS, 1]
   const out: { v: number; major: boolean }[] = []
   const fine = 16

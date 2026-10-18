@@ -9,6 +9,7 @@ voc_mapper:
   ros__parameters:
     sensor_lag_seconds: 12.0   # calibrate: uncap a marker at a known spot, time the rise
     publish_period_s: 1.0
+    full_every_n: 30         # republish the whole buffer every 30 s; in between only new points
     max_points: 50000
     map_frame: map
     base_frame: base_link

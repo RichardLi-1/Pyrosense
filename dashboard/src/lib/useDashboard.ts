@@ -1,7 +1,7 @@
 // All dashboard state in one place: the live event stream (one or more wearers),
 // polled heat map, trail, alerts, summary, and replay (`until`). Designs only render it.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Alert, DataSource, HeatCell, LiveEvent, MapMeta, Pose, ScanSession, Sensor, Summary, TrailPoint, VocUnit } from './types'
+import type { Alert, DataSource, HeatCell, LiveEvent, MapMeta, Pose, ScanSession, Sensor, Summary, TrailPoint, VocUnit, Warning } from './types'
 import { DEFAULT_WEARER } from './types'
 import { configureScale } from './colors'
 
@@ -32,6 +32,8 @@ type State = {
   restarting: boolean // a scan restart was requested and the new map hasn't arrived yet
   notice: string | null // short confirmation shown in the header (saved, restarted, failed)
   review: Review | null // a past scan being looked at instead of the live one
+  warnings: Warning[] // spoken warnings, newest first, last 20
+  warningsSeen: number // how many the user has looked at (unread = length - seen)
 }
 
 /** A past scan loaded for review: its own map, readings and scrub position; live state stays untouched underneath. */
@@ -89,7 +91,7 @@ export function useDashboard(source: DataSource) {
   const [s, set] = useState<State>({
     kind: source.kind, connected: false, bridge: false, session: '', started: null, threshold: 2200, unit: 'ppb', sensor: null, sensorWindow: emptySensorWindow(),
     crew: [], wearers: {}, selected: null, meta: null, image: null, alerts: [], heat: [], trail: [], history: [],
-    until: null, summary: null, summaryLoading: false, restarting: false, notice: null, review: null,
+    until: null, summary: null, summaryLoading: false, restarting: false, notice: null, review: null, warnings: [], warningsSeen: 0,
   })
   const untilRef = useRef<number | null>(null)
   useEffect(() => { untilRef.current = s.until }, [s.until])
@@ -107,7 +109,7 @@ export function useDashboard(source: DataSource) {
             const fresh = p.session && p.session !== e.session
             const base: State = fresh
               ? { ...p, meta: null, image: null, alerts: [], heat: [], trail: [], history: [], wearers: {}, crew: [], selected: null,
-                  sensorWindow: emptySensorWindow(), summary: null, until: null }
+                  sensorWindow: emptySensorWindow(), summary: null, until: null, warnings: [], warningsSeen: 0 }
               : p
             return withWearer({ ...base, session: e.session, started: Date.parse(e.started), threshold: e.threshold,
                                 unit: e.unit ?? 'ppb', sensor: e.sensor ?? base.sensor,
@@ -148,6 +150,11 @@ export function useDashboard(source: DataSource) {
         case 'bridge':
           set((p) => ({ ...p, bridge: e.connected }))
           break
+        case 'warning': {
+          const { t: _t, ...w } = e
+          set((p) => (p.warnings.some((x) => x.id === w.id) ? p : { ...p, warnings: [w, ...p.warnings].slice(0, 20) }))
+          break
+        }
       }
     }
     return source.connect(onEvent, (connected) => set((p) => ({ ...p, connected })))
@@ -157,6 +164,7 @@ export function useDashboard(source: DataSource) {
   useEffect(() => {
     if (!s.session) return
     source.alerts().then((alerts) => set((p) => ({ ...p, alerts }))).catch(() => {})
+    source.warnings?.().then((r) => set((p) => ({ ...p, warnings: r.items.slice(0, 20), warningsSeen: r.items.length }))).catch(() => {})
     source.trail(null).then((trail) => set((p) => ({ ...p, trail, history: trail }))).catch(() => {})
   }, [source, s.session])
 
@@ -244,6 +252,7 @@ export function useDashboard(source: DataSource) {
   }, [source])
 
   const closeReview = useCallback(() => set((p) => ({ ...p, review: null })), [])
+  const markWarningsRead = useCallback(() => set((p) => (p.warningsSeen === p.warnings.length ? p : { ...p, warningsSeen: p.warnings.length })), [])
 
   // scrubbing inside a review: refetch that scan's heat and trail up to `until`
   const reviewUntil = s.review?.until, reviewId = s.review?.scan.session
@@ -290,5 +299,5 @@ export function useDashboard(source: DataSource) {
     reviewing: R?.scan ?? null,
   }
   const scans = { supported: !!source.sessions, list: listScans, open: openReview, close: closeReview, save: saveScan, restart: restartScan }
-  return { s: view, setUntil, loadSummary, select, scans }
+  return { s: view, setUntil, loadSummary, select, scans, markWarningsRead }
 }

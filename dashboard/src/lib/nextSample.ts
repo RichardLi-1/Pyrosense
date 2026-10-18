@@ -1,4 +1,4 @@
-// Layer 5: where to sample next, from the GP's own uncertainty.
+// Layer 5: gas movement prediction (where to sample next), from the GP's own uncertainty.
 //
 // Every passable cell the field knows about (conf > 0: within reach of at least one
 // reading, so the GP can say *something* about it) is scored
@@ -18,6 +18,7 @@ import type { Field } from './gp'
 import { SCALE, level, type Level } from './colors'
 import { geodesic, lattice, LATTICE_M, type Obs, type PassGrid } from './sourceModel'
 import type { SourceProb } from './sourcePosterior'
+import type { Forecast } from './forecast'
 
 export type Candidate = {
   x: number; y: number // metres, world frame
@@ -170,4 +171,102 @@ export function bearing(from: { x: number; y: number }, to: { x: number; y: numb
   const a = Math.atan2(to.x - from.x, to.y - from.y) // 0 = north, clockwise
   const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
   return dirs[Math.round(((a + Math.PI * 2) / (Math.PI / 4))) % 8]
+}
+
+export type Movement = {
+  x: number; y: number // where the gas is predicted to be heading
+  r: number // metres, haze radius (2.5–4.5 m)
+  value: number; level: Level // forecast value and band there at +1 min
+  sd: number; confidence: 'High' | 'Medium' | 'Low' // GP sd at the spot vs σf
+  arriveS: number | null // first horizon at which the spot crosses the moderate band; 0 if already there; null if never
+  pSource: number // 0..1 source likelihood at the spot
+  fromCandidate: boolean // no forecast rise found: fell back to the next-sample candidate
+}
+
+const MOVE_REACH_M = 8
+
+/**
+ * Where the gas is heading: the forecast cell within reach of the wearer whose +1 min
+ * value rises most over the current field; failing that, the next-sample candidate.
+ * Carries the numbers the UI explains the pick with.
+ */
+export function predictMovement(gas: { field: Field | null; forecast: Forecast | null; sourceProb: SourceProb | null },
+                                pose: { x: number; y: number } | null, nx: NextSample | null): Movement | null {
+  const { field, forecast: fc, sourceProb: sp } = gas
+  if (!field) return null
+  let x: number | null = null, y: number | null = null, fromCandidate = false
+  if (fc && pose && fc.mean.length) {
+    const m1 = fc.mean[0]
+    let best = 0
+    const c0 = Math.max(0, Math.floor((pose.x - MOVE_REACH_M - fc.x0) / fc.res)), c1 = Math.min(fc.cols - 1, Math.ceil((pose.x + MOVE_REACH_M - fc.x0) / fc.res))
+    const r0 = Math.max(0, Math.floor((pose.y - MOVE_REACH_M - fc.y0) / fc.res)), r1 = Math.min(fc.rows - 1, Math.ceil((pose.y + MOVE_REACH_M - fc.y0) / fc.res))
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+      const i = r * fc.cols + c
+      const v1 = m1[i]
+      if (Number.isNaN(v1)) continue
+      const cx = fc.x0 + (c + 0.5) * fc.res, cy = fc.y0 + (r + 0.5) * fc.res
+      if (Math.hypot(cx - pose.x, cy - pose.y) > MOVE_REACH_M) continue
+      const v0 = at(field, field.mean, cx, cy)
+      const rise = v1 - (Number.isNaN(v0) ? field.base : v0)
+      if (rise > best) { best = rise; x = cx; y = cy }
+    }
+  }
+  if (x == null || y == null) {
+    if (!nx) return null
+    x = nx.x; y = nx.y; fromCandidate = true
+  }
+  const value = fc && fc.mean.length ? at(fc, fc.mean[0], x, y) : at(field, field.mean, x, y)
+  const v = Number.isNaN(value) ? at(field, field.mean, x, y) : value
+  const sd = at(field, field.sd, x, y)
+  const confidence = sd < 0.25 * field.sigmaF ? 'High' : sd < 0.5 * field.sigmaF ? 'Medium' : 'Low'
+  let arriveS: number | null = null
+  const nowV = at(field, field.mean, x, y)
+  if (nowV >= SCALE.bands[0]) arriveS = 0
+  else if (fc) for (let h = 0; h < fc.horizons.length; h++) { if (at(fc, fc.mean[h], x, y) >= SCALE.bands[0]) { arriveS = fc.horizons[h]; break } }
+  const pSource = sp && sp.peak > 0 ? Math.min(1, Math.max(0, at(sp, sp.prob, x, y) / sp.peak)) : 0
+  const r = Math.min(4.5, Math.max(2.5, (nx?.r ?? 1) * 1.6))
+  return { x, y, r, value: Number.isNaN(v) ? field.base : v, level: level(Number.isNaN(v) ? 0 : v), sd, confidence, arriveS, pSource, fromCandidate }
+}
+
+function at(l: { x0: number; y0: number; res: number; cols: number; rows: number }, a: Float32Array, x: number, y: number): number {
+  const c = Math.floor((x - l.x0) / l.res), r = Math.floor((y - l.y0) / l.res)
+  return c >= 0 && r >= 0 && c < l.cols && r < l.rows ? a[r * l.cols + c] : NaN
+}
+
+/** Reasoning lines for a Movement, for the rail tile and the map tooltip. */
+export function explainMovement(m: Movement, kind: string | null): string[] {
+  const unit = SCALE.short ? ` ${SCALE.short}` : ''
+  const out = [
+    `Predicted ${m.level === 'alert' ? 'hazardous' : m.level} · ${m.value.toFixed(0)}${unit}`,
+    `Confidence ${m.confidence.toLowerCase()} (±${m.sd.toFixed(0)}${unit})`,
+  ]
+  if (m.arriveS === 0) out.push('Already elevated there')
+  else if (m.arriveS != null) out.push(`Arrives in ≤${Math.max(1, Math.round(m.arriveS / 60))} min`)
+  if (m.pSource > 0.05) out.push(`Source likelihood ${Math.round(m.pSource * 100)}%`)
+  out.push('TVOC (SGP30) · mixed volatile organics')
+  if (kind) out.push(`${kind} (heuristic)`)
+  return out
+}
+
+/**
+ * A rough guess at the kind of gas from how the channels move together over the last
+ * minute. The SGP30 cannot name a gas; this is a labelled heuristic, nothing more.
+ */
+export function gasKind(tvoc: [number, number][], eco2: [number, number][]): string | null {
+  if (tvoc.length < 4) return null
+  const vs = tvoc.map(([, v]) => v)
+  const rise = Math.max(...vs) - vs[0]
+  if (rise < 0.5 * SCALE.bands[0]) return null
+  // sharp: most of the rise within 10 s
+  let sharp = false
+  for (let i = 1; i < tvoc.length; i++) {
+    const j = tvoc.findIndex(([t]) => t >= tvoc[i][0] - 10_000)
+    if (j >= 0 && tvoc[i][1] - tvoc[j][1] >= 0.5 * rise && tvoc[i][1] - tvoc[j][1] >= 0.5 * SCALE.bands[0]) { sharp = true; break }
+  }
+  if (eco2.length >= 4) {
+    const es = eco2.map(([, v]) => v)
+    const eRise = Math.max(...es) - es[0]
+    if (eRise >= 0.15 * Math.max(1, es[0])) return 'breath/combustion-like'
+  }
+  return sharp ? 'solvent/alcohol-like' : null
 }

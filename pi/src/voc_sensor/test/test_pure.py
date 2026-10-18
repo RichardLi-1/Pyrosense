@@ -74,8 +74,11 @@ def test_fake_sensor_spikes(tmp_path):
 
 
 def test_pack_points_layout():
-    data, n = pack_points([(1.0, 2.0, 0.0, 183.0), (4.35, -1.04, 0.0, 412.0)])
-    assert n == 2 and len(data) == 2 * POINT_STEP
-    back = np.frombuffer(data, dtype="<f4").reshape(-1, 4)
-    np.testing.assert_allclose(back, [[1, 2, 0, 183], [4.35, -1.04, 0, 412]], rtol=1e-6)
+    from voc_sensor.cloud import DTYPE
+    data, n = pack_points([(1.0, 2.0, 0.0, 183.0, 1792281129.5), (4.35, -1.04, 0.0, 412.0, 1792281130.0)])
+    assert n == 2 and len(data) == 2 * POINT_STEP == 48
+    back = np.frombuffer(data, dtype=DTYPE)
+    np.testing.assert_allclose(back["voc"], [183, 412])
+    np.testing.assert_allclose(back["x"], [1, 4.35], rtol=1e-6)
+    np.testing.assert_allclose(back["t"], [1792281129.5, 1792281130.0])  # float64 keeps sub-second precision
     assert pack_points([]) == (b"", 0)

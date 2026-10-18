@@ -5,7 +5,8 @@ import type { GasModel } from './gasModel'
 import type { HeatCell, MapMeta } from './types'
 import { CELL_SIZE } from './types'
 
-export function useGasModel(meta: MapMeta | null, image: CanvasImageSource | null, heat: HeatCell[], enabled = true) {
+/** `scope` names the scan the inputs belong to (session id); when it changes the old model is dropped at once. */
+export function useGasModel(meta: MapMeta | null, image: CanvasImageSource | null, heat: HeatCell[], enabled = true, scope = '') {
   const [model, setModel] = useState<GasModel | null>(null)
   const worker = useRef<Worker | null>(null)
   const busy = useRef(false)
@@ -28,6 +29,15 @@ export function useGasModel(meta: MapMeta | null, image: CanvasImageSource | nul
     worker.current = w
     return () => { w.terminate(); worker.current = null }
   }, [])
+
+  // a different scan, or one without a floor plan: nothing from before may show
+  const lastScope = useRef(scope)
+  useEffect(() => {
+    if (lastScope.current !== scope) { lastScope.current = scope; seq.current++; pending.current = null; setModel(null) }
+  }, [scope])
+  useEffect(() => {
+    if (!meta || !image) { seq.current++; pending.current = null; setModel(null) }
+  }, [meta, image])
 
   useEffect(() => {
     if (!enabled || !meta || !image || !heat.length) return

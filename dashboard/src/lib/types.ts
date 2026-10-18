@@ -32,13 +32,22 @@ export type LiveEvent =
   | { t: 'voc'; ts: string; voc: number; n_new: number; x: number; y: number; wearer?: string }
   | ({ t: 'alert'; map_png_url: string | null } & Alert)
   | { t: 'bridge'; connected: boolean }
+  | ({ t: 'warning' } & Warning)
+
+/** A plain-language warning the backend speaks when a reading stays elevated. */
+export type Warning = {
+  id: string; ts: string; voc: number; unit: VocUnit; level: 'good' | 'moderate' | 'poor' | 'hazardous'
+  x: number; y: number; text: string; source: 'gemini' | 'fallback'; audio_url: string | null; voice: 'elevenlabs' | 'browser'
+}
+export type WarningsResponse = { threshold: number; unit: VocUnit; voice: 'elevenlabs' | 'browser'; gemini: boolean; items: Warning[] }
 
 export type HeatCell = { cx: number; cy: number; mean: number; weight: number; sd: number; n: number }
 export type TrailPoint = { ts: string; x: number; y: number; heading: number | null; voc: number; wearer?: string }
 
 export const DEFAULT_WEARER = 'A'
 /** Radio call sign for a wearer: FF-1, FF-2… in crew order (the raw id when it isn't on the crew list). */
-export const responderLabel = (crew: string[], id: string) => { const i = crew.indexOf(id); return i >= 0 ? `FF-${i + 1}` : id }
+/** How a wearer is named on screen: nothing when there is only one, their short id (A, B, …) when there are several. */
+export const responderLabel = (crew: string[], id: string) => (crew.length > 1 ? id : '')
 export type Summary = { text: string; source: 'gemini' | 'fallback' }
 
 /** A past (or the current) scan as the backend catalogs it: GET /sessions. */
@@ -71,6 +80,8 @@ export interface DataSource {
   sessions?(): Promise<ScanSession[]>
   restart?(name?: string): Promise<RestartResult>
   save?(name?: string, notes?: string): Promise<SaveResult>
+  /** Spoken warnings so far, newest first. */
+  warnings?(): Promise<WarningsResponse>
 }
 
 export const CELL_SIZE = 0.2 // metres, matches voc_cells in db/schema.sql

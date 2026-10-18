@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react'
 import { SCALE } from '../lib/colors'
 import { bandImage, isolines, kernelGrid, layerGrid, strokeIsolines, type HeatImage, type Isoline } from '../lib/heatImage'
-import { predict, predictedOnly } from '../lib/predict'
 import { drawMark, markKind } from '../lib/marks'
-import { chooseNext, explainNext } from '../lib/nextSample'
+import { Plume, type FreeMask } from '../lib/plume'
+import { DisplayField } from '../lib/diffuse'
 import { DEFAULT_WEARER, responderLabel } from '../lib/types'
 import { uncertaintyImage } from '../lib/uncertainty'
 import { drawHardHat } from './theme'
@@ -11,17 +11,16 @@ import { TRAIL_S, crewColor, growBox, insets, knownBounds, type Box, type Render
 
 type Camera = { cx: number; cy: number; scale: number } // metres, px per metre
 
+/** '#rrggbb' (or any CSS colour via a fallback) at the given alpha. */
+function hexA(color: string, a: number): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(color)
+  if (!m) return color
+  const n = parseInt(m[1], 16)
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`
+}
+
 const SIGMA_M = 0.3 // heat spreads ~1 m around each reading: hugs the path, no blobs
 
-/** Diagonal stripes, used to cut predicted areas so they read as "not measured". */
-function stripePattern(ctx: CanvasRenderingContext2D) {
-  const c = document.createElement('canvas')
-  c.width = c.height = 8
-  const g = c.getContext('2d')!
-  g.strokeStyle = '#000'; g.lineWidth = 3
-  g.beginPath(); g.moveTo(-2, 10); g.lineTo(10, -2); g.moveTo(6, 10); g.lineTo(10, 6); g.moveTo(-2, 2); g.lineTo(2, -2); g.stroke()
-  return ctx.createPattern(c, 'repeat')!
-}
 
 export default function MapView(props: RendererProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -33,7 +32,17 @@ export default function MapView(props: RendererProps) {
   const occ = useRef<HTMLCanvasElement | null>(null)
   const free = useRef<HTMLCanvasElement | null>(null) // scanned free space, to clip heat at walls
   const known = useRef<Box | null>(null) // what has been mapped so far, for the default camera
-  const { image, meta, theme, heat: cells, recenter, onMoved, model, gas, horizon } = props
+  const freeMask = useRef<FreeMask | null>(null) // scanned free space as a lookup, for wall-blocked particles
+  const plume = useRef(new Plume())
+  const display = useRef(new DisplayField()) // the field as shown: diffusing between updates
+  const isFree = (x: number, y: number) => {
+    const m = freeMask.current
+    if (!m) return true
+    const { origin, res, w, h } = m.meta
+    const c = Math.floor((x - origin[0]) / res), r = h - 1 - Math.floor((y - origin[1]) / res)
+    return c >= 0 && r >= 0 && c < w && r < h && m.data[r * w + c] === 1
+  }
+  const { image, meta, theme, heat: cells, recenter, onMoved, gas } = props
   useEffect(() => {
     if (!image || !meta) return
     const c = document.createElement('canvas')
@@ -44,14 +53,17 @@ export default function MapView(props: RendererProps) {
     const d = px.data
     known.current = knownBounds((i) => d[i * 4 + 3], meta)
     const mask = new ImageData(meta.w, meta.h)
+    const lookup = new Uint8Array(meta.w * meta.h)
     for (let i = 0; i < d.length; i += 4) {
       const a = d[i + 3]
       if (a === 0) continue
       const isFree = a > 240 // backend PNG: free alpha 255, occupied 217
       const col = isFree ? theme.free : theme.wall
       d[i] = col[0]; d[i + 1] = col[1]; d[i + 2] = col[2]; d[i + 3] = col[3]
-      if (isFree) mask.data[i + 3] = 255
+      if (isFree) { mask.data[i + 3] = 255; lookup[i >> 2] = 1 }
     }
+    freeMask.current = { data: lookup, meta }
+    plume.current.setMask(freeMask.current)
     g.putImageData(px, 0, 0)
     occ.current = c
     const mc = document.createElement('canvas')
@@ -60,45 +72,23 @@ export default function MapView(props: RendererProps) {
     free.current = mc
   }, [image, meta, theme])
 
-  // Heat. With the gas model: the GP field (mean where confident, opacity = confidence),
-  // or a forecast horizon. Before the model has run: crisp bands from the kernel-smoothed cells.
-  const CONF_MEASURED = 0.35 // below this a cell is drawn as "predicted" (striped)
+  // Heat: the measured field only. With the gas model, the GP mean on every passable cell it
+  // reaches, fading with confidence; before the model has run, kernel-smoothed cells. Shown
+  // through the diffusing display field either way.
   const heat = useRef<HeatImage | null>(null)
   const contours = useRef<Isoline[]>([])
-  const predicted = useRef<{ img: HeatImage; lines: Isoline[] } | null>(null)
   useEffect(() => {
     const field = gas?.field
-    const fc = gas?.forecast
-    if (horizon != null && fc) {
-      // projection: everything striped, nothing claims to be measured
-      const h = Math.max(0, fc.horizons.indexOf(horizon))
-      const g = layerGrid(fc, fc.mean[h], null, 0.1)
-      for (let i = 0; i < g.den.length; i++) if (g.num[i] < SCALE.bands[0] * 0.8) g.den[i] = 0
-      heat.current = null; contours.current = []
-      predicted.current = { img: bandImage(g, { minSupport: 0.5, alphaScale: 3.4 }), lines: isolines(g, { minSupport: 0.5 }) }
-      return
-    }
     if (field) {
       const g = layerGrid(field, field.mean, field.conf, 0.1)
-      const opts = { prior: g.prior, priorWeight: CONF_MEASURED }
-      heat.current = bandImage(g, { ...opts, alphaBy: g.conf, skipThin: true })
-      contours.current = isolines(g, { ...opts, allCorners: true })
-      // thin-confidence part above the first band: the extrapolation, striped
-      const pg = { ...g, num: new Float32Array(g.num.length), den: new Float32Array(g.den.length) }
-      for (let i = 0; i < g.den.length; i++) if (g.conf[i] < CONF_MEASURED && g.num[i] >= SCALE.bands[0]) { pg.num[i] = g.num[i]; pg.den[i] = 1 }
-      predicted.current = { img: bandImage(pg, { minSupport: 0.5, alphaScale: 3.2 }), lines: isolines(pg, { minSupport: 0.5 }) }
+      display.current.setTarget(g, (i) => g.num[i], (i) => g.conf[i] > 0, (i) => 0.2 + 0.8 * g.conf[i], isFree, field.base)
       return
     }
     const g = kernelGrid(cells, SIGMA_M, 0.05)
-    heat.current = g ? bandImage(g) : null
-    contours.current = g ? isolines(g) : []
-    if (!model || !cells.length) { predicted.current = null; return }
-    const bounds = { x0: model.x0, y0: model.y0, x1: model.x0 + model.cols * model.res, y1: model.y0 + model.rows * model.res }
-    const pred = predict(cells, bounds, model, SIGMA_M, model.res)
-    if (!pred) { predicted.current = null; return }
-    const pg = predictedOnly(pred)
-    predicted.current = { img: bandImage(pg, { minSupport: 0.5, alphaScale: 3.2 }), lines: isolines(pg, { minSupport: 0.5 }) }
-  }, [gas, horizon, model, cells])
+    if (g) display.current.setTarget(g, (i) => (g.den[i] > 0 ? g.num[i] / g.den[i] : NaN), (i) => g.den[i] >= 0.3,
+                                     (i) => Math.min(1, g.den[i] / 0.9), isFree, 0.2 * SCALE.bands[0])
+    else { display.current.clear(); heat.current = null; contours.current = [] }
+  }, [gas, cells])
 
   // Uncertainty: fog density = GP posterior sd / σf
   const fog = useRef<HeatImage | null>(null)
@@ -113,15 +103,14 @@ export default function MapView(props: RendererProps) {
     const ctx = canvas.getContext('2d')!
     const layer = document.createElement('canvas')
     const lctx = layer.getContext('2d')!
-    const play = document.createElement('canvas')
-    const pctx = play.getContext('2d')!
-    const stripes = stripePattern(pctx)
     let raf = 0
     let cam: Camera | null = null
-    let marker: { x: number; y: number; text: string } | null = null // next-sample marker on screen, for its tooltip
+    let lastFrame = 0
     const shown = new Map<string, { x: number; y: number; h: number }>()
     const seenAlerts = new Set<string>()
     const rings: { x: number; y: number; t0: number }[] = []
+    const seenWarnings = new Set<string>()
+    const pulses: { x: number; y: number; t0: number }[] = [] // spoken warnings: a smaller, quicker ring
     const setManual = () => {
       if (!manual.current) { manual.current = true; p.current.onMoved(true) }
     }
@@ -208,6 +197,14 @@ export default function MapView(props: RendererProps) {
         ctx.drawImage(occ.current, ...mapRect)
       }
 
+      // the displayed field keeps diffusing between updates (live only); redraw when it moved
+      if (display.current.tick(now, P.until == null)) {
+        const dg = display.current.grid()
+        if (dg) {
+          heat.current = bandImage(dg, { prior: dg.prior, priorWeight: 1, alphaBy: dg.alphaBy, skipThin: true })
+          contours.current = isolines(dg, { prior: dg.prior, priorWeight: 1 })
+        }
+      }
       // heat on its own layer, clipped to scanned free space so it stops at walls
       const hm = heat.current
       if (P.layers.gas && hm && mapRect && free.current) {
@@ -229,33 +226,44 @@ export default function MapView(props: RendererProps) {
         ctx.restore()
       }
 
-      // predicted areas: striped band fills + thin contours, plus likely sources
-      const pr = predicted.current
-      if (P.layers.gas && pr) {
-        if (play.width !== canvas.width || play.height !== canvas.height) { play.width = canvas.width; play.height = canvas.height }
-        pctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-        pctx.globalCompositeOperation = 'source-over'
-        pctx.clearRect(0, 0, w, h)
-        pctx.imageSmoothingEnabled = true
-        pctx.drawImage(pr.img.canvas, sx(pr.img.x0), sy(pr.img.y1), pr.img.w * c.scale, pr.img.h * c.scale)
-        pctx.globalCompositeOperation = 'destination-out'
-        pctx.setTransform(1, 0, 0, 1, 0, 0)
-        pctx.fillStyle = stripes
-        pctx.fillRect(0, 0, play.width, play.height)
-        pctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-        pctx.globalCompositeOperation = 'source-over'
-        pctx.globalAlpha = 0.55
-        strokeIsolines(pctx, pr.lines, sx, sy, 1, T.ink)
-        pctx.globalAlpha = 1
+      // live plume: instant bloom at the wearer for an elevated reading, and the long-lived
+      // particle cloud; both clipped to scanned free space, drawn additively over the field
+      if (P.layers.gas && mapRect && free.current) {
+        const pl = plume.current
+        const wall = Date.now()
+        const dt = lastFrame ? (now - lastFrame) / 1000 : 0
+        pl.sync(P.trail, P.until ?? wall)
+        const fc = P.gas?.forecast
+        const grad = fc && fc.mean.length ? (x: number, y: number): [number, number] | null => {
+          const m1 = fc.mean[0]
+          const cc = Math.floor((x - fc.x0) / fc.res), rr = Math.floor((y - fc.y0) / fc.res)
+          if (cc < 1 || rr < 1 || cc >= fc.cols - 1 || rr >= fc.rows - 1) return null
+          const i = rr * fc.cols + cc
+          const gx = m1[i + 1] - m1[i - 1], gy = m1[i + fc.cols] - m1[i - fc.cols]
+          if (Number.isNaN(gx) || Number.isNaN(gy)) return null
+          const n = Math.hypot(gx, gy)
+          return n > 1e-3 ? [gx / n, gy / n] : null
+        } : null
+        if (P.until == null) pl.step(dt, grad, wall)
+        if (layer.width !== canvas.width || layer.height !== canvas.height) { layer.width = canvas.width; layer.height = canvas.height }
+        lctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        lctx.globalCompositeOperation = 'source-over'
+        lctx.clearRect(0, 0, w, h)
+        pl.draw(lctx, sx, sy, c.scale, P.until ?? wall)
+        lctx.globalCompositeOperation = 'destination-in'
+        lctx.imageSmoothingEnabled = false
+        lctx.drawImage(free.current, ...mapRect)
         ctx.save()
         ctx.setTransform(1, 0, 0, 1, 0, 0)
-        ctx.globalCompositeOperation = T.heatBlend
-        ctx.drawImage(play, 0, 0)
+        ctx.globalCompositeOperation = 'lighter'
+        ctx.drawImage(layer, 0, 0)
         ctx.restore()
       }
+      lastFrame = now
+
       // uncertainty fog, clipped to scanned free space like the heat
       const fg = fog.current
-      if (P.layers.uncertainty && fg && mapRect && free.current && P.horizon == null) {
+      if (P.layers.uncertainty && fg && mapRect && free.current) {
         if (layer.width !== canvas.width || layer.height !== canvas.height) { layer.width = canvas.width; layer.height = canvas.height }
         lctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         lctx.globalCompositeOperation = 'source-over'
@@ -270,43 +278,6 @@ export default function MapView(props: RendererProps) {
         ctx.drawImage(layer, 0, 0)
         ctx.restore()
       }
-      if (P.layers.source && P.model && P.horizon == null) {
-        ctx.save()
-        ctx.setLineDash([3, 4])
-        ctx.lineWidth = 1.25
-        ctx.strokeStyle = T.alert
-        ctx.fillStyle = T.alert
-        ctx.font = '500 10px Inter, system-ui, sans-serif'
-        ctx.textAlign = 'center'
-        for (const src of P.model.sources) {
-          if (src.q < SCALE.bands[0]) continue // a blip below the moderate band is not a source
-          const x = sx(src.x), y = sy(src.y), r = 0.9 * c.scale
-          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke()
-          ctx.fillText('likely source', x, y - r - 6)
-        }
-        ctx.restore()
-      }
-      // where a reading would help most (GP variance), from where the selected wearer stands
-      const nx = P.gas && P.horizon == null ? chooseNext(P.gas.next, me ?? P.pose, P.gas.field) : null
-      if (P.layers.next && nx && P.gas) {
-        const x = sx(nx.x), y = sy(nx.y), r = Math.max(8, nx.r * c.scale)
-        marker = { x, y, text: explainNext(nx, P.gas.field!, me ?? P.pose) }
-        ctx.save()
-        ctx.strokeStyle = T.next
-        ctx.fillStyle = T.next
-        // thin ring for the region, a small × at the point, label above
-        ctx.globalAlpha = 0.35
-        ctx.lineWidth = 1
-        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke()
-        ctx.globalAlpha = 1
-        ctx.lineWidth = 2
-        ctx.lineCap = 'round'
-        ctx.beginPath(); ctx.moveTo(x - 5, y - 5); ctx.lineTo(x + 5, y + 5); ctx.moveTo(x - 5, y + 5); ctx.lineTo(x + 5, y - 5); ctx.stroke()
-        ctx.font = '500 10px Inter, system-ui, sans-serif'
-        ctx.textAlign = 'center'
-        ctx.fillText('sample next', x, y - 10)
-        ctx.restore()
-      } else marker = null
 
       // trails: the last 90 s per wearer, fading with age (the heat carries VOC)
       const byWearer = new Map<string, typeof P.trail>()
@@ -350,6 +321,22 @@ export default function MapView(props: RendererProps) {
         ctx.arc(sx(a.x), sy(a.y), 5, 0, Math.PI * 2)
         ctx.stroke()
       }
+      for (const wn of P.warnings ?? []) {
+        if (seenWarnings.has(wn.id)) continue
+        seenWarnings.add(wn.id)
+        if (P.until == null && Date.now() - Date.parse(wn.ts) < 10_000) pulses.push({ x: wn.x, y: wn.y, t0: now })
+      }
+      for (let i = pulses.length - 1; i >= 0; i--) {
+        const f = (now - pulses[i].t0) / 1100
+        if (f >= 1) { pulses.splice(i, 1); continue }
+        ctx.strokeStyle = '#ff2d3f'
+        ctx.globalAlpha = 1 - f
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(sx(pulses[i].x), sy(pulses[i].y), 4 + f * 34, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.globalAlpha = 1
+      }
       for (let i = rings.length - 1; i >= 0; i--) {
         const f = (now - rings[i].t0) / 1600
         if (f >= 1) { rings.splice(i, 1); continue }
@@ -390,13 +377,31 @@ export default function MapView(props: RendererProps) {
           ctx.beginPath(); ctx.arc(x, y, 15 + pulse * 18, 0, Math.PI * 2); ctx.fill()
           ctx.globalAlpha = 1
         }
-        const cone = sel ? 58 : 40
+        // facing: a long bright wedge with a crisp arrow tip in the badge colour, and the heading in degrees
+        const cone = sel ? 116 : 80
         const g = ctx.createRadialGradient(x, y, 10, x, y, cone)
-        g.addColorStop(0, T.halo); g.addColorStop(1, 'rgba(0,0,0,0)')
+        g.addColorStop(0, hexA(color, 0.42)); g.addColorStop(0.6, hexA(color, 0.16)); g.addColorStop(1, hexA(color, 0))
         ctx.fillStyle = g
         ctx.beginPath(); ctx.moveTo(x, y)
-        ctx.arc(x, y, cone, -sh.h - 0.42, -sh.h + 0.42)
+        ctx.arc(x, y, cone, -sh.h - 0.36, -sh.h + 0.36)
         ctx.closePath(); ctx.fill()
+        {
+          const tipR = cone * 0.78, ax = x + Math.cos(-sh.h) * tipR, ay = y + Math.sin(-sh.h) * tipR
+          const bx = x + Math.cos(-sh.h) * (tipR - 12), by = y + Math.sin(-sh.h) * (tipR - 12)
+          const nx = -Math.sin(-sh.h), ny = Math.cos(-sh.h)
+          ctx.fillStyle = color
+          ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx + nx * 5.5, by + ny * 5.5); ctx.lineTo(bx - nx * 5.5, by - ny * 5.5); ctx.closePath(); ctx.fill()
+          ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineCap = 'round'
+          ctx.beginPath(); ctx.moveTo(x + Math.cos(-sh.h) * (sel ? 16 : 13), y + Math.sin(-sh.h) * (sel ? 16 : 13)); ctx.lineTo(bx, by); ctx.stroke()
+          if (sel && !dim) {
+            const deg = Math.round((((sh.h * 180) / Math.PI) % 360 + 360) % 360)
+            ctx.font = '600 11px JetBrains Mono, ui-monospace, monospace'
+            ctx.textAlign = 'left'
+            ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(7,9,13,0.8)'; ctx.lineJoin = 'round'
+            const lx = x + (crew ? 18 : 16), ly = y + (crew ? 18 : 4)
+            ctx.strokeText(`${deg}°`, lx, ly); ctx.fillStyle = color; ctx.fillText(`${deg}°`, lx, ly)
+          }
+        }
         ctx.shadowColor = 'rgba(0,0,0,0.35)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 2
         drawHardHat(ctx, x, y, sel ? 14 : 11, color, T.icon)
         ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0
@@ -426,12 +431,6 @@ export default function MapView(props: RendererProps) {
     let down: { x: number; y: number } | null = null
     const onDown = (e: MouseEvent) => { drag = down = pt(e) }
     const onMove = (e: MouseEvent) => {
-      if (e.target === canvas) { // the next-sample marker explains itself on hover
-        const q = pt(e)
-        const near = marker && Math.hypot(q.x - marker.x, q.y - marker.y) < 14
-        const tip = near ? `Sample next: ${marker!.text}` : ''
-        if (canvas.title !== tip) canvas.title = tip
-      }
       if (!drag || !cam) return
       const q = pt(e)
       if (q.x === drag.x && q.y === drag.y) return

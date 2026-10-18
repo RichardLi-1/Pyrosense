@@ -25,10 +25,10 @@ export type MapTheme = {
 
 export const THEMES = {
   focus: {
-    free: [255, 255, 255, 14], wall: [226, 230, 238, 235], grid: null,
+    free: [131, 126, 124, 217], wall: [226, 230, 238, 235], grid: null, // granite floor, ~85% so the field still reads
     trail: 'rgba(255,255,255,0.22)', badge: '#ffffff', crew: ['#ffffff', '#7dd3fc', '#c4b5fd', '#e2e8f0'], icon: '#0b0e14', halo: 'rgba(255,255,255,0.16)', alert: '#ff4d5e', next: '#ff4d5e',
     heatBlend: 'source-over', heatAlpha: 0.96, ink: LIGHT_INK,
-    floor3d: '#141922', wall3d: '#3a4150', wallTop3d: '#e2e6ee', glow3d: 'additive',
+    floor3d: '#837e7c', wall3d: '#3a4150', wallTop3d: '#e2e6ee', glow3d: 'additive',
   },
   paper: {
     free: [255, 255, 255, 255], wall: [24, 28, 36, 255], grid: 'rgba(24,28,36,0.05)',

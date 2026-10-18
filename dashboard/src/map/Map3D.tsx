@@ -1,17 +1,15 @@
 // 3D view built from the 2D data: walls extruded from the occupancy grid, the floor
-// painted with the VOC field (measured, else predicted), and a drifting particle cloud
-// for predicted gas in the air, including in rooms nobody has entered yet.
+// painted with the measured VOC field, and a drifting live cloud of blooms and particles
+// from the readings taken so far.
 // Two cameras: overhead orbit, and first person at the selected wearer's eyes.
 // World axes: map x -> x, map y -> -z, height -> y.
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import { bandImage, isolines, strokeIsolines } from '../lib/heatImage'
-import { gasCloud, predict, PRIOR_WEIGHT, type GasCloud } from '../lib/predict'
-import type { Source } from '../lib/sourceModel'
-import { SCALE } from '../lib/colors'
+import { bandImage, isolines, layerGrid, strokeIsolines } from '../lib/heatImage'
 import { drawMark, markKind, type Mark } from '../lib/marks'
-import { chooseNext, type NextSample } from '../lib/nextSample'
+import { Plume } from '../lib/plume'
+import Compass from '../ui/Compass'
 import { uncertaintyImage } from '../lib/uncertainty'
 import { DEFAULT_WEARER, type MapMeta } from '../lib/types'
 import { drawHardHat } from './theme'
@@ -22,7 +20,7 @@ const WALL_FULL = 2.6 // m: in first person
 const EYE_H = 1.6
 const FOV_OVERHEAD = 32
 const FOV_FIRST = 72
-const GAS_SIZE = 0.32 // m, particle diameter
+const GAS_SIZE = 1.2 // m, billboard diameter: large, soft, overlapping, so puffs merge into one volume
 
 type Rect = { c0: number; r0: number; w: number; h: number } // grid pixels, image rows (row 0 = max y)
 
@@ -96,9 +94,7 @@ type Person = { group: THREE.Group; body: THREE.Group; ring: THREE.Mesh; stem: T
 type Api = {
   setWalls: (rects: Rect[], meta: MapMeta) => void
   setFloor: (canvas: HTMLCanvasElement, meta: MapMeta) => void
-  setGas: (cloud: GasCloud) => void
-  setSources: (sources: Source[]) => void
-  setNext: (n: NextSample | null) => void
+  setPlumeMask: (m: { data: Uint8Array; meta: MapMeta }) => void
   setMarks: (marks: Mark[]) => void
   setTheme: () => void
   recenter: () => void
@@ -110,6 +106,9 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
   const known = useRef<Box | null>(null) // what has been mapped so far, for the default view
   p.current = props
   const api = useRef<Api | null>(null)
+  const [ghostOn, setGhostOn] = useState(false)
+  const compassRef = useRef<SVGSVGElement>(null)
+  const stripRef = useRef<HTMLDivElement>(null)
 
   // scene setup, once
   useEffect(() => {
@@ -153,20 +152,18 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     // gas: particle cloud, drifting
     const gasMat = new THREE.ShaderMaterial({
       vertexShader: GAS_VERT, fragmentShader: GAS_FRAG, transparent: true, depthWrite: false,
-      uniforms: { uTime: { value: 0 }, uScale: { value: 1 }, uMaxSize: { value: 64 }, uAlpha: { value: 1 } },
+      uniforms: { uTime: { value: 0 }, uScale: { value: 1 }, uMaxSize: { value: 220 }, uAlpha: { value: 1 } },
     })
-    const gas = new THREE.Points(new THREE.BufferGeometry(), gasMat)
-    gas.frustumCulled = false
-    scene.add(gas)
+    // live cloud: the blooms and particles the 2D map shows, as puffs around sensor height
+    const liveMat = gasMat.clone()
+    liveMat.blending = THREE.AdditiveBlending
+    const liveGas = new THREE.Points(new THREE.BufferGeometry(), liveMat)
+    liveGas.frustumCulled = false
+    liveGas.renderOrder = 3
+    scene.add(liveGas)
+    const plume = new Plume()
+    let plumeAt = 0
 
-    // likely sources: dashed-looking rings on the floor
-    const sourceGroup = new THREE.Group()
-    scene.add(sourceGroup)
-    const sourceMat = new THREE.LineDashedMaterial({ dashSize: 0.18, gapSize: 0.14, transparent: true, opacity: 0.9 })
-    // next-best sample: a dotted ring with a crosshair, where the GP is least sure
-    const nextGroup = new THREE.Group()
-    scene.add(nextGroup)
-    const nextMat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.95 })
 
     // commander's annotations: always-on-top pins, constant screen size
     const markGroup = new THREE.Group()
@@ -196,6 +193,11 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       const group = new THREE.Group(), body = new THREE.Group()
       const ring = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({ transparent: true }))
       ring.position.y = 0.02
+      const arrow = new THREE.Mesh(new THREE.ShapeGeometry(new THREE.Shape([new THREE.Vector2(0.9, 0), new THREE.Vector2(0.35, 0.16), new THREE.Vector2(0.35, -0.16)]))
+                                     .rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.95, depthWrite: false }))
+      arrow.position.y = 0.03
+      arrow.name = 'arrow'
+      ring.add(arrow)
       const stem = new THREE.Mesh(stemGeo, new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.6 }))
       const badge = new THREE.Sprite(new THREE.SpriteMaterial({ depthTest: false, sizeAttenuation: false }))
       badge.position.y = EYE_H
@@ -233,10 +235,9 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       capMat.color.set(T.wallTop3d)
       for (const pr of people.values()) pr.color = '' // repaint next frame
       alertMat.color.set(T.alert)
-      sourceMat.color.set(T.alert)
-      nextMat.color.set(T.next)
       gasMat.blending = T.glow3d === 'additive' ? THREE.AdditiveBlending : THREE.NormalBlending
       gasMat.needsUpdate = true
+      liveMat.needsUpdate = true
     }
     setTheme()
 
@@ -335,63 +336,59 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         floor.position.set(m.origin[0] + (m.w * m.res) / 2, 0, -(m.origin[1] + (m.h * m.res) / 2))
         floor.visible = true
       },
-      setGas(cloud) {
-        const g = new THREE.BufferGeometry()
-        g.setAttribute('position', new THREE.BufferAttribute(cloud.positions, 3))
-        g.setAttribute('aColor', new THREE.BufferAttribute(cloud.colors, 3))
-        g.setAttribute('aAlpha', new THREE.BufferAttribute(cloud.alphas, 1))
-        g.setAttribute('aPhase', new THREE.BufferAttribute(cloud.phases, 1))
-        gas.geometry.dispose()
-        gas.geometry = g
-      },
-      setSources(sources) {
-        for (const c of [...sourceGroup.children]) { sourceGroup.remove(c); (c as THREE.Line).geometry.dispose() }
-        for (const s of sources) {
-          if (s.q < SCALE.bands[0]) continue // a blip below the moderate band is not a source
-          const pts = Array.from({ length: 65 }, (_, i) => {
-            const a = (i / 64) * Math.PI * 2
-            return new THREE.Vector3(s.x + Math.cos(a) * 0.9, 0.04, -(s.y + Math.sin(a) * 0.9))
-          })
-          const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), sourceMat)
-          line.computeLineDistances()
-          sourceGroup.add(line)
-        }
-      },
-      setNext(n) {
-        for (const c of [...nextGroup.children]) { nextGroup.remove(c); (c as THREE.Line).geometry.dispose() }
-        if (!n) return
-        // a small × on the floor, in the alert red; no ring in 3D
-        const k = 0.22
-        const cross = [new THREE.Vector3(n.x - k, 0.05, -(n.y - k)), new THREE.Vector3(n.x + k, 0.05, -(n.y + k)),
-                       new THREE.Vector3(n.x - k, 0.05, -(n.y + k)), new THREE.Vector3(n.x + k, 0.05, -(n.y - k))]
-        nextGroup.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(cross), nextMat))
-      },
       setMarks(marks) {
-        for (const c of [...markGroup.children]) { markGroup.remove(c); (c as THREE.Sprite).material.dispose() }
+        for (const c of [...markGroup.children]) { markGroup.remove(c); ((c as THREE.Sprite).material as THREE.SpriteMaterial).dispose() }
         for (const m of marks) {
           const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: markTexture(m), depthTest: false, sizeAttenuation: false }))
-          sp.center.set(0.5, 1 - 16 / 56) // anchor on the disc, label hangs below
-          sp.scale.set(0.056, 0.039, 1)
-          sp.position.set(m.x, 0.3, -m.y)
-          sp.renderOrder = 9
+          sp.center.set(0.5, 0) // the pin's foot sits on the point
+          sp.position.set(m.x, 0.05, -m.y)
+          sp.renderOrder = 11
+          sp.userData.markSprite = true
           markGroup.add(sp)
         }
       },
+      setPlumeMask(m) { plume.setMask(m) },
       setTheme,
       recenter() {
         look = { yaw: 0, pitch: -0.12 }
+        if (ghost) { ghost = null; setGhostOn(false) }
         goal = defaultView()
         moved = false
         p.current.onMoved(false)
       },
     }
 
+    // ghost: a free camera in first person. WASD (B = back) moves, drag looks, C returns to the wearer.
+    let ghost: { pos: THREE.Vector3; yaw: number } | null = null
+    const keys = new Set<string>()
+    const typing = (e: KeyboardEvent) => { const t = e.target as HTMLElement | null; return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (typing(e) || e.metaKey || e.ctrlKey || e.altKey) return
+      const k = e.key.toLowerCase()
+      if (['w', 'a', 's', 'd', 'b', 'q', 'e', 'shift', ' '].includes(k)) { keys.add(k); if (k === ' ') e.preventDefault() }
+    }
+    const onKeyUp = (e: KeyboardEvent) => keys.delete(e.key.toLowerCase())
+    const onBlur = () => keys.clear()
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    const passable = (x: number, y: number) => {
+      const m = p.current.meta, data = pixels.current
+      if (!m || !data) return true
+      const top = m.origin[1] + m.h * m.res
+      const cc = Math.floor((x - m.origin[0]) / m.res), rr = Math.floor((top - y) / m.res)
+      if (cc < 0 || rr < 0 || cc >= m.w || rr >= m.h) return false
+      const a = data[(rr * m.w + cc) * 4 + 3]
+      return a === 0 || a > 240
+    }
+    let lastTick = performance.now()
+
     let raf = 0
     let alertKey = ''
     let trailKey = ''
     let placed = false
     let wasFirst = false
-    const eye = new THREE.Object3D()
+    const eye = new THREE.PerspectiveCamera() // a camera, so lookAt() faces the target along -Z like the real one (an Object3D would face away)
     const t0 = performance.now()
     const tick = () => {
       raf = requestAnimationFrame(tick)
@@ -422,6 +419,8 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         pr.badge.scale.set(s, s, 1)
         const pulse = (performance.now() % 2200) / 2200
         pr.ring.scale.setScalar(sel ? 1 + pulse * 1.6 : 1)
+      const arrow = pr.ring.getObjectByName('arrow') as THREE.Mesh | undefined
+      if (arrow) { arrow.rotation.y = pr.heading; arrow.scale.setScalar((sel ? 1.25 : 1) / pr.ring.scale.x); (arrow.material as THREE.MeshBasicMaterial).color.set(pr.color || '#fff'); (arrow.material as THREE.MeshBasicMaterial).opacity = dim ? 0.25 : 0.95 }
         ;(pr.ring.material as THREE.MeshBasicMaterial).opacity = dim ? 0.15 : sel ? 1 - pulse : 0.5
       }
       for (const [id, pr] of people) if (!live.has(id)) pr.group.visible = false
@@ -465,10 +464,11 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
           alertGroup.add(m)
         }
       }
-      gas.visible = P.layers.gas
-      sourceGroup.visible = P.layers.source
-      nextGroup.visible = P.layers.next
       markGroup.visible = P.layers.marks
+      {
+        const sm = (0.16 * 2) / size.h * 80 // ~80 px tall whatever the viewport
+        for (const c of markGroup.children) (c as THREE.Sprite).scale.set(sm * (160 / 112), sm, 1)
+      }
 
       // walls rise in first person, and the lens widens
       wallGroup.scale.y += ((fp ? WALL_FULL : WALL_OVERHEAD) - wallGroup.scale.y) * 0.08
@@ -483,8 +483,38 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         else look = { yaw: 0, pitch: -0.12 }
       }
 
+      const tnow = performance.now()
+      const dt = Math.min(0.1, (tnow - lastTick) / 1000)
+      lastTick = tnow
+
       const me = people.get(P.selected)
-      if (fp && me?.shown) {
+      // ghost: the first key press detaches the camera from the wearer
+      if (fp && !ghost && me?.shown && ['w', 'a', 's', 'd', 'b'].some((k) => keys.has(k))) {
+        ghost = { pos: new THREE.Vector3(me.shown.x, 1.2, me.shown.z), yaw: me.heading + look.yaw }
+        look = { yaw: 0, pitch: look.pitch }
+        setGhostOn(true)
+      }
+      if (!fp && ghost) { ghost = null; setGhostOn(false) }
+      if (fp && ghost) {
+        const yaw = ghost.yaw + look.yaw
+        const fwd = (keys.has('w') ? 1 : 0) - (keys.has('s') || keys.has('b') ? 1 : 0)
+        const side = (keys.has('d') ? 1 : 0) - (keys.has('a') ? 1 : 0)
+        const up = (keys.has('e') || keys.has(' ') ? 1 : 0) - (keys.has('q') || keys.has('shift') ? 1 : 0)
+        const v = 1.5 * dt
+        // world: x east, z = -north; forward along yaw, right is yaw - 90°
+        const dx = (Math.cos(yaw) * fwd + Math.sin(yaw) * side) * v
+        const dzn = (Math.sin(yaw) * fwd - Math.cos(yaw) * side) * v // in map y (north)
+        const gx = ghost.pos.x, gy = -ghost.pos.z
+        if (passable(gx + dx, gy + dzn)) { ghost.pos.x += dx; ghost.pos.z -= dzn }
+        else if (passable(gx + dx, gy)) ghost.pos.x += dx
+        else if (passable(gx, gy + dzn)) ghost.pos.z -= dzn
+        ghost.pos.y = Math.max(0.4, Math.min(2.4, ghost.pos.y + up * v))
+        const pitch = look.pitch
+        eye.position.copy(ghost.pos)
+        eye.lookAt(ghost.pos.x + Math.cos(yaw) * Math.cos(pitch), ghost.pos.y + Math.sin(pitch), ghost.pos.z - Math.sin(yaw) * Math.cos(pitch))
+        camera.position.lerp(eye.position, 0.3)
+        camera.quaternion.slerp(eye.quaternion, 0.2)
+      } else if (fp && me?.shown) {
         // eyes at head height, looking along the heading (+ drag offset); head pitch/roll follow the IMU, damped
         const yaw = me.heading + look.yaw
         const pitch = look.pitch + me.pitch * 0.6
@@ -510,16 +540,51 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         controls.update()
       }
 
-      gasMat.uniforms.uTime.value = (performance.now() - t0) / 1000
-      gasMat.uniforms.uScale.value = (GAS_SIZE * size.h * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360))
-      gasMat.uniforms.uMaxSize.value = 48 * renderer.getPixelRatio()
-      gasMat.uniforms.uAlpha.value += ((fp ? 0.45 : 1) - gasMat.uniforms.uAlpha.value) * 0.1
+      // live cloud from the plume (rebuilt a few times a second)
+      if (P.layers.gas && P.meta) {
+        const wall = Date.now()
+        plume.sync(P.trail, P.until ?? wall)
+        if (P.until == null) plume.step(dt, null, wall)
+        if (tnow - plumeAt > 250) {
+          plumeAt = tnow
+          const snap = plume.snapshot(P.until ?? wall)
+          const g = new THREE.BufferGeometry()
+          g.setAttribute('position', new THREE.BufferAttribute(snap.positions, 3))
+          g.setAttribute('aColor', new THREE.BufferAttribute(snap.colors, 3))
+          g.setAttribute('aAlpha', new THREE.BufferAttribute(snap.alphas, 1))
+          g.setAttribute('aPhase', new THREE.BufferAttribute(snap.phases, 1))
+          liveGas.geometry.dispose(); liveGas.geometry = g
+        }
+        liveGas.visible = true
+      } else liveGas.visible = false
+      for (const [m, sz, al] of [[liveMat, GAS_SIZE, 0.35]] as const) {
+        m.uniforms.uTime.value = (performance.now() - t0) / 1000
+        m.uniforms.uScale.value = (sz * size.h * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360))
+        m.uniforms.uMaxSize.value = 220 * renderer.getPixelRatio()
+        m.uniforms.uAlpha.value = al
+      }
+
+      // orientation: the rose turns with the camera; in first person a heading strip shows degrees and the nearest points
+      {
+        const dir = new THREE.Vector3(); camera.getWorldDirection(dir)
+        const camYaw = Math.atan2(-dir.z, dir.x) // map frame: 0 = east, counter-clockwise
+        const north = ((Math.PI / 2 - camYaw) * 180) / Math.PI // screen rotation that keeps N pointing north
+        if (compassRef.current) compassRef.current.style.transform = `rotate(${-north}deg)`
+        if (stripRef.current) {
+          const hdg = ((90 - (camYaw * 180) / Math.PI) % 360 + 360) % 360 // compass heading, 0 = N clockwise
+          const names = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']
+          const left = names[(Math.round(hdg / 45) + 7) % 8], right = names[(Math.round(hdg / 45) + 1) % 8]
+          stripRef.current.textContent = `${left}   ·   ${Math.round(hdg)}°   ·   ${right}`
+          stripRef.current.style.display = fp ? '' : 'none'
+        }
+      }
       renderer.render(scene, camera)
     }
     tick()
 
     return () => {
       cancelAnimationFrame(raf)
+      window.removeEventListener('keydown', onKeyDown); window.removeEventListener('keyup', onKeyUp); window.removeEventListener('blur', onBlur)
       ro.disconnect()
       controls.removeEventListener('start', onStart)
       controls.dispose()
@@ -541,7 +606,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     }
   }, [])
 
-  const { image, meta, theme, heat, recenter, model, layers, marks } = props
+  const { image, meta, theme, heat, recenter, layers, marks } = props
   const field = props.gas?.field ?? null
 
   // walls: from the occupancy image whenever the map changes
@@ -555,10 +620,13 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     const data = g.getImageData(0, 0, meta.w, meta.h).data
     pixels.current = data
     known.current = knownBounds((i) => data[i * 4 + 3], meta)
+    const lookup = new Uint8Array(meta.w * meta.h)
+    for (let i = 0; i < lookup.length; i++) if (data[i * 4 + 3] > 240) lookup[i] = 1
+    api.current.setPlumeMask({ data: lookup, meta })
     api.current.setWalls(wallRects((i) => data[i * 4 + 3], meta.w, meta.h), meta)
   }, [image, meta])
 
-  // floor + gas: the field on scanned floor; predicted gas anywhere walls don't block
+  // floor + gas: the measured field on scanned floor
   useEffect(() => {
     const data = pixels.current
     if (!meta || !data || !api.current) return
@@ -573,22 +641,17 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     }
     g.putImageData(img, 0, 0)
     const top = meta.origin[1] + meta.h * meta.res
-    const bounds = { x0: meta.origin[0], y0: meta.origin[1], x1: meta.origin[0] + meta.w * meta.res, y1: top }
-    const pred = layers.gas ? predict(heat, bounds, model) : null
-    if (pred) {
-      const band = bandImage(pred.grid, { prior: pred.prior, priorWeight: PRIOR_WEIGHT, predictedAlpha: 0.4 })
+    if (layers.gas && field) {
+      // the measured GP field on the floor, fading with confidence (same picture as the 2D map)
+      const fg0 = layerGrid(field, field.mean, field.conf, 0.1)
+      const alphaBy = new Float32Array(fg0.conf.length)
+      for (let i = 0; i < alphaBy.length; i++) alphaBy[i] = fg0.conf[i] > 0 ? 0.2 + 0.8 * fg0.conf[i] : 0
+      const band = bandImage(fg0, { prior: fg0.prior, priorWeight: 1, alphaBy, skipThin: false })
       g.globalCompositeOperation = 'source-atop' // only on scanned floor
       g.drawImage(band.canvas, (band.x0 - meta.origin[0]) / meta.res, (top - band.y1) / meta.res,
                   band.w / meta.res, band.h / meta.res)
-      strokeIsolines(g, isolines(pred.grid, { prior: pred.prior, priorWeight: PRIOR_WEIGHT }),
+      strokeIsolines(g, isolines(fg0, { prior: fg0.prior, priorWeight: 1 }),
                      (x) => (x - meta.origin[0]) / meta.res, (y) => (top - y) / meta.res, 1.4, theme.ink)
-      const notWall = (x: number, y: number) => {
-        const cc = Math.floor((x - meta.origin[0]) / meta.res), rr = Math.floor((top - y) / meta.res)
-        if (cc < 0 || rr < 0 || cc >= meta.w || rr >= meta.h) return false
-        const a = data[(rr * meta.w + cc) * 4 + 3]
-        return a === 0 || a > 240 // unknown space can hold predicted gas too
-      }
-      api.current.setGas(gasCloud(pred, notWall))
     }
     const fog = layers.uncertainty && field ? uncertaintyImage(field) : null
     if (fog) {
@@ -596,19 +659,19 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       g.imageSmoothingEnabled = true
       g.drawImage(fog.canvas, (fog.x0 - meta.origin[0]) / meta.res, (top - fog.y1) / meta.res, fog.w / meta.res, fog.h / meta.res)
     }
-    api.current.setSources(model?.sources ?? [])
     api.current.setFloor(c, meta)
-  }, [meta, theme, heat, model, layers.gas, layers.uncertainty, field])
-
-  // next-best sample: re-pick when the model or the selected wearer's position changes
-  const { gas, pose, horizon } = props
-  useEffect(() => {
-    api.current?.setNext(gas && horizon == null ? chooseNext(gas.next, pose, gas.field) : null)
-  }, [gas, pose, horizon])
+  }, [meta, theme, heat, layers.gas, layers.uncertainty, field])
 
   useEffect(() => { api.current?.setMarks(marks) }, [marks])
   useEffect(() => { api.current?.setTheme() }, [theme])
   useEffect(() => { if (recenter) api.current?.recenter() }, [recenter])
 
-  return <div ref={hostRef} className={`map-3d${props.onPick ? ' picking' : ''}`} />
+  return (
+    <>
+      <div ref={hostRef} className={`map-3d${props.onPick ? ' picking' : ''}`} />
+      <Compass ref={compassRef} className="compass-3d" />
+      <div ref={stripRef} className="heading-strip mono" style={{ display: 'none' }} />
+      {ghostOn && <div className="ghost-hint">Ghost · W A S D to move · press C to return</div>}
+    </>
+  )
 }

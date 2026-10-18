@@ -107,7 +107,7 @@ export function gasCloud(pred: Prediction, isFree: (x: number, y: number) => boo
         const h = Math.min(2.6, Math.max(0.05, SENSOR_HEIGHT + gauss() * spread))
         pos.push(x, h, -y)
         col.push(cr / 255, cg / 255, cb / 255)
-        alp.push((0.1 + 0.3 * Math.min(1, (v - SCALE.bands[0]) / (SCALE.bands[2] - SCALE.bands[0]))) * (0.4 + 0.6 * cf))
+        alp.push((0.05 + 0.2 * Math.min(1, (v - SCALE.bands[0]) / (SCALE.bands[2] - SCALE.bands[0]))) * (0.4 + 0.6 * cf)) // low: the volume comes from overlap
         ph.push(rand() * Math.PI * 2)
       }
     }

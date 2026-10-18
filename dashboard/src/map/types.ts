@@ -1,7 +1,7 @@
 import type { GasModel } from '../lib/gasModel'
 import type { SourceModel } from '../lib/sourceModel'
 import type { Mark } from '../lib/marks'
-import type { Alert, HeatCell, MapMeta, Pose, TrailPoint } from '../lib/types'
+import type { Alert, HeatCell, MapMeta, Pose, TrailPoint, Warning } from '../lib/types'
 import type { Layers } from './layers'
 import type { MapTheme } from './theme'
 
@@ -19,10 +19,12 @@ export type MapProps = {
   alerts: Alert[]
   threshold?: number
   voc?: number | null // current (or replayed) reading, for the marker on the colour scale
+  until?: number | null // replay position (ms); null/undefined = live. The plume rebuilds from the trail at this time.
+  warnings?: Warning[] // spoken warnings: a brief pulse where each new one fired
   follow: boolean // camera tracks the selected wearer
   layers: Layers
   only: string | null // show just this wearer (others dimmed), null = everyone
-  crew: string[] // for FF-n labels
+  crew: string[] // wearer ids, for labels when there are several
   marks: Mark[]
   /** Set while placing an annotation: a click on the map reports the world point (metres). */
   onPick?: ((x: number, y: number) => void) | null
@@ -34,8 +36,8 @@ export type MapProps = {
 
 /** What MapStage adds for the 2D/3D renderers. */
 export type RendererProps = MapProps & {
-  model: SourceModel | null // predicted VOC beyond what's sensed
-  horizon: number | null // seconds ahead to show the forecast for, null = now
+  model: SourceModel | null // source model (kept for the model pipeline; not rendered)
+  horizon: number | null // always null now: forecast views are not rendered
   recenter: number // bump to animate back to the default view
   onMoved: (moved: boolean) => void
 }

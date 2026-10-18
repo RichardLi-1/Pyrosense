@@ -108,8 +108,9 @@ a.brand { color: inherit; text-decoration: none; cursor: pointer; pointer-events
 .d-focus {
   background: radial-gradient(1200px 800px at 65% 45%, #0d1118 0%, #07090d 70%);
 }
-.f-top { position: absolute; z-index: 4; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; padding: 14px 28px; }
-.f-reading { position: absolute; left: 28px; top: 50%; transform: translateY(-52%); display: flex; flex-direction: column; gap: 10px; pointer-events: none; --rail-size: 48px; width: 340px; }
+.f-top { position: absolute; z-index: 4; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 14px 28px; }
+.f-top .row { flex-wrap: wrap; justify-content: flex-end; row-gap: 8px; min-height: 60px; align-content: center; }
+.f-reading { position: absolute; left: 14px; top: max(calc(var(--header-h, 88px) + 16px), calc(50% - 310px)); padding: 18px 14px 16px; border-radius: 18px; background: color-mix(in srgb, var(--bg) 62%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); transform: none; display: flex; flex-direction: column; gap: 10px; pointer-events: none; --rail-size: 48px; width: 368px; }
 /* one size for every number in the rail: the hero and the tiles read as equals */
 .f-reading .reading-value, .f-reading .tile-value { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: var(--rail-size); font-weight: 300; letter-spacing: -0.04em; line-height: 0.95; }
 .f-reading .tiles { grid-template-columns: repeat(2, 1fr); gap: 12px 20px; margin-top: 2px; }
@@ -207,7 +208,7 @@ a.brand { color: inherit; text-decoration: none; cursor: pointer; pointer-events
 .tile--warn .tile-value { color: var(--alert); }
 .tile--next .tile-value { color: var(--good); }
 .tiles-note { grid-column: 1 / -1; font-size: 11px; color: var(--muted); }
-.tile-note { font-size: 11px; line-height: 1.35; color: var(--muted); max-width: 150px; }
+.tile-note { font-size: 11px; line-height: 1.4; color: var(--muted); max-width: 150px; white-space: pre-line; }
 .tile:has(.tile-note) { grid-column: 1 / -1; }
 .tile:has(.tile-note) .tile-note { max-width: 330px; }
 .tiles-warm { color: var(--moderate); }
@@ -299,19 +300,27 @@ a.brand { color: inherit; text-decoration: none; cursor: pointer; pointer-events
 
 /* ---- commander's marks ----------------------------------------------------- */
 .annotate {
-  position: absolute; z-index: 4; right: 28px; top: 50%; transform: translateY(-50%); width: 64px;
-  display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 10px 6px; border-radius: 18px;
+  position: absolute; z-index: 4; right: 28px; top: 50%; transform: translateY(-50%); width: 164px;
+  display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 10px; border-radius: 18px;
   background: var(--pop); border: 1px solid var(--line); box-shadow: 0 4px 16px rgba(0,0,0,.18);
 }
-.annotate > .caption { text-align: center; font-size: 10px; margin-bottom: 2px; }
-.annotate > button { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 7px 2px 6px; border-radius: 12px; color: var(--text); }
-.annotate > button svg { color: var(--mark, currentColor); }
-.annotate > button span { font-size: 10px; line-height: 1.15; color: var(--muted); text-align: center; }
-.annotate > button:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 7%, transparent); }
-.annotate > button.on { background: color-mix(in srgb, var(--mark) 22%, transparent); box-shadow: inset 0 0 0 1.5px var(--mark); }
-.annotate > button.on span { color: var(--text); }
-.annotate-list-btn { border-top: 1px solid var(--line) !important; border-radius: 0 0 12px 12px !important; margin-top: 2px; }
-.annotate-list-btn .mono { font-size: 15px; color: var(--text) !important; }
+.annotate > .caption { font-size: 10px; margin: 2px 0 4px 10px; }
+/* each mark is the same pill as the header buttons (.map-btn): icon left, white label */
+.annotate > button {
+  display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px; border-radius: 999px;
+  color: var(--text); font-size: 13px; font-weight: 500; background: transparent; border: 1px solid var(--line);
+  transition: background .12s ease, border-color .12s ease;
+}
+.annotate > button svg { flex: none; width: 20px; height: 20px; }
+.annotate > button span { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+.annotate > button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--text) 30%, transparent); }
+.annotate > button.on { background: color-mix(in srgb, var(--mark) 16%, transparent); border-color: var(--mark); }
+.annotate > button:focus-visible { outline: 2px solid color-mix(in srgb, var(--text) 40%, transparent); outline-offset: 1px; }
+.annotate-list-btn { margin-top: 4px; justify-content: space-between; border-color: transparent !important; }
+.annotate-list-btn .mono { order: 2; font-size: 13px; color: var(--muted) !important; }
+.annotate-list-btn span:not(.mono) { color: var(--muted); }
+.annotate-list-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.annotate-list-btn:disabled { opacity: .5; }
 .annotate-list {
   position: absolute; right: calc(100% + 12px); bottom: 0; width: 300px; max-height: 60vh; overflow-y: auto; margin: 0; padding: 6px;
   list-style: none; border-radius: 14px; background: var(--pop); border: 1px solid var(--line); box-shadow: 0 20px 60px rgba(0,0,0,.4);
@@ -359,3 +368,36 @@ a.brand { color: inherit; text-decoration: none; cursor: pointer; pointer-events
 .exposure-dot { fill: var(--signal); stroke: var(--pop); stroke-width: 2; }
 .exposure-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 6px; }
 .exposure-empty { font-size: 13px; }
+
+/* ghost free-look hint (first person, camera detached from the wearer) */
+.ghost-hint { position: absolute; left: 50%; top: calc(var(--header-h, 88px) + 16px); transform: translateX(-50%); z-index: 4; padding: 8px 14px; border-radius: 999px;
+  font-size: 12px; color: var(--text); background: color-mix(in srgb, var(--pop) 80%, transparent); border: 1px solid var(--line); backdrop-filter: blur(8px); pointer-events: none; }
+
+/* ---- spoken warnings ------------------------------------------------------- */
+.warnings-btn .badge { margin-left: 8px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 999px; background: var(--alert); color: #fff;
+  font-size: 11px; font-weight: 600; display: inline-grid; place-items: center; }
+.warnings-btn:disabled { opacity: .5; }
+.drawer.warnings { width: 400px; }
+.warning-list { list-style: none; margin: 0; padding: 4px 16px 24px; display: flex; flex-direction: column; gap: 6px; }
+.warning { padding: 12px 14px; border-radius: 12px; border: 1px solid transparent; }
+.warning.flash { animation: warnflash 1.6s ease-out; }
+@keyframes warnflash { 0% { background: color-mix(in srgb, var(--alert) 28%, transparent); border-color: var(--alert); } 100% { background: transparent; border-color: transparent; } }
+.warning-top { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.warning-top .tag { margin-left: auto; font-size: 11px; }
+.warning p { margin: 8px 0 0; font-size: 14px; line-height: 1.5; }
+.pill { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: 999px; font-size: 11px; font-weight: 600;
+  color: var(--pill); background: color-mix(in srgb, var(--pill) 16%, transparent); }
+.play { width: 26px; height: 26px; border-radius: 50%; display: inline-grid; place-items: center; color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); }
+.play:hover { background: color-mix(in srgb, var(--text) 16%, transparent); }
+.reading-flash .reading-label { animation: pillflash 1.6s ease-out; }
+@keyframes pillflash { 0%, 30% { color: #ff2d3f; text-shadow: 0 0 12px rgba(255,45,63,.6); } 100% { text-shadow: none; } }
+@media (prefers-reduced-motion: reduce) { .warning.flash, .reading-flash .reading-label { animation: none; } }
+
+/* ---- orientation: compass rose and first-person heading strip ---------------- */
+:root { --compass-bg: rgba(16,20,27,.78); }
+.compass { position: absolute; z-index: 4; right: 104px; top: calc(var(--header-h, 88px) + 16px); pointer-events: none; transition: transform .12s linear; }
+.compass-3d { transition: none; }
+.heading-strip { position: absolute; z-index: 4; left: 50%; top: calc(var(--header-h, 88px) + 16px); transform: translateX(-50%); padding: 7px 16px; border-radius: 999px;
+  font-size: 13px; letter-spacing: .06em; white-space: pre; color: var(--text); background: color-mix(in srgb, var(--pop) 80%, transparent);
+  border: 1px solid var(--line); backdrop-filter: blur(8px); pointer-events: none; }
+.heading-strip + .ghost-hint { top: calc(var(--header-h, 88px) + 60px); }

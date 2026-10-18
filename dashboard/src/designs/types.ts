@@ -15,4 +15,5 @@ export type DesignProps = {
   gas: GasModel | null
   setSource: (kind: 'live' | 'demo') => void // Simulation / Real toggle
   scans: ScanActions
+  markWarningsRead: () => void
 }

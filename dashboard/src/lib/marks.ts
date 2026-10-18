@@ -5,29 +5,46 @@ import { useCallback, useEffect, useState } from 'react'
 export type MarkKind = 'victim' | 'fire' | 'blocked' | 'exit' | 'stairs' | 'hazard'
 export type Mark = { id: string; kind: MarkKind; x: number; y: number; ts: string; by?: string } // by: responder label who reported it
 
-/** Glyphs are 16×16 stroked SVG paths, shared by the toolbar (SVG) and the map (Path2D). */
-export const MARK_KINDS: { kind: MarkKind; label: string; color: string; d: string }[] = [
-  { kind: 'victim', label: 'Victim', color: '#f0abfc',
-    d: 'M8 1.8a1.7 1.7 0 1 1 0 3.4a1.7 1.7 0 1 1 0-3.4Z M8 6.6v4.2 M4.6 7.6 8 6.6l3.4 1 M5.6 14.2 8 10.8l2.4 3.4' },
-  { kind: 'fire', label: 'Fire', color: '#ff7a2e',
-    d: 'M8 14.2c-2.7 0-4.4-1.8-4.4-4.2 0-2.6 2.1-3.8 2.6-6.4 1.5 1 2.3 2.4 2.3 3.8.6-.5 1-1.3 1.1-2.2 1.5 1.2 2.8 3 2.8 4.8 0 2.4-1.7 4.2-4.4 4.2Z' },
-  { kind: 'blocked', label: 'Blocked exit', color: '#ff4d5e',
-    d: 'M3 14V2.5h6.5V14 M1.5 14h13 M10.6 5.2l3.6 3.6 M14.2 5.2l-3.6 3.6' },
-  { kind: 'exit', label: 'Exit', color: '#4ade80',
-    d: 'M3 14V2.5h6V14 M1.5 14h13 M9.6 8.2h4.6 M12.4 6.2l2 2-2 2' },
+/**
+ * Glyphs are filled 24×24 silhouettes (`d`), shaded light-to-dark in the mark's colour, with dark
+ * cut-out `detail` strokes (the X, the "!", the door). Shared by the toolbar (SVG) and the map (Path2D).
+ * Colours follow the gas map: blue for people, the heat ramp for fire and danger, "good" teal for the way out.
+ */
+export type MarkDef = { kind: MarkKind; label: string; color: string; d: string; detail?: string; accent?: string }
+export const MARK_KINDS: MarkDef[] = [
+  { kind: 'victim', label: 'Victim', color: '#4f8cff',
+    d: 'M12 2.5a3.75 3.75 0 1 1 0 7.5a3.75 3.75 0 0 1 0-7.5Z M4.5 20.2c0-4.2 3.3-7.2 7.5-7.2s7.5 3 7.5 7.2c0 .7-.6 1.3-1.3 1.3H5.8c-.7 0-1.3-.6-1.3-1.3Z' },
+  { kind: 'fire', label: 'Fire', color: '#ef233c', accent: '#ffd166',
+    d: 'M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5Z',
+    detail: 'M12 21.5a3.6 3.6 0 0 1-3.6-3.6c0-1.8 1.3-2.7 1.8-4.5.9.9 1.4 1.8 1.4 2.7.5-.4.9-.9 1.1-1.6.9.9 2.1 2.1 2.1 3.4a3.6 3.6 0 0 1-2.8 3.6Z' },
+  { kind: 'blocked', label: 'Blocked exit', color: '#ef233c',
+    d: 'M7.6 2h8.8c.5 0 1 .2 1.4.6l5.6 5.6c.4.4.6.9.6 1.4v8.8c0 .5-.2 1-.6 1.4l-5.6 5.6c-.4.4-.9.6-1.4.6H7.6c-.5 0-1-.2-1.4-.6L.6 19.8c-.4-.4-.6-.9-.6-1.4V9.6c0-.5.2-1 .6-1.4L6.2 2.6c.4-.4.9-.6 1.4-.6Z',
+    detail: 'M8.8 8.8l6.4 6.4 M15.2 8.8l-6.4 6.4' },
+  { kind: 'exit', label: 'Exit', color: '#1dd3b0',
+    d: 'M2 6.5A2.5 2.5 0 0 1 4.5 4h15A2.5 2.5 0 0 1 22 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-15A2.5 2.5 0 0 1 2 17.5Z',
+    detail: 'M5.5 8h4.5v8H5.5Z M13 12h5.5 M16.5 10l2 2-2 2' },
   { kind: 'stairs', label: 'Stairs', color: '#93c5fd',
-    d: 'M1.8 13.8h3.4v-3h3v-3h3v-3h3' },
-  { kind: 'hazard', label: 'Hazard', color: '#facc15',
-    d: 'M8 2.2l6.4 11.4H1.6Z M8 6.4v3.4 M8 11.6v.4' },
+    d: 'M2 21.5v-4.5h4.5v-4.5H11V8h4.5V3.5H22v18Z' },
+  { kind: 'hazard', label: 'Hazard', color: '#ffd166',
+    d: 'M10.1 3.4a2.2 2.2 0 0 1 3.8 0l8.3 14.4a2.2 2.2 0 0 1-1.9 3.3H3.7a2.2 2.2 0 0 1-1.9-3.3Z',
+    detail: 'M12 8.5v5 M12 17.2h.01' },
 ]
 export const markKind = (k: MarkKind) => MARK_KINDS.find((m) => m.kind === k)!
 
-const paths = new Map<MarkKind, Path2D>()
-/** Map pin: dark disc with a coloured ring and the white glyph, label underneath. */
+/** Lighter tint of a hex colour, for the top of the shading gradient. */
+export function tint(hex: string, t: number): string {
+  const n = parseInt(hex.slice(1), 16)
+  const c = [n >> 16, (n >> 8) & 255, n & 255].map((v) => Math.round(v + (255 - v) * t))
+  return `rgb(${c[0]},${c[1]},${c[2]})`
+}
+export const DETAIL_INK = '#0b0e14'
+
+const paths = new Map<string, Path2D>()
+const path2d = (key: string, d: string) => { let p = paths.get(key); if (!p) paths.set(key, (p = new Path2D(d))); return p }
+
+/** Map pin: dark disc with a coloured ring and the shaded glyph, label underneath. */
 export function drawMark(ctx: CanvasRenderingContext2D, m: { kind: MarkKind }, x: number, y: number, r = 13, label?: string) {
   const k = markKind(m.kind)
-  let p = paths.get(m.kind)
-  if (!p) paths.set(m.kind, (p = new Path2D(k.d)))
   ctx.save()
   ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 2
   ctx.fillStyle = '#0b0e14'
@@ -35,11 +52,20 @@ export function drawMark(ctx: CanvasRenderingContext2D, m: { kind: MarkKind }, x
   ctx.shadowColor = 'transparent'
   ctx.strokeStyle = k.color; ctx.lineWidth = 2
   ctx.stroke()
-  const s = (r * 1.15) / 16
-  ctx.translate(x - 8 * s, y - 8 * s)
+  const s = (r * 1.2) / 24
+  ctx.translate(x - 12 * s, y - 12 * s)
   ctx.scale(s, s)
-  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.lineCap = ctx.lineJoin = 'round'
-  ctx.stroke(p)
+  const body = path2d(k.kind, k.d)
+  // soft drop shadow under the silhouette, then the light-to-dark fill, then the cut-out detail
+  ctx.save(); ctx.translate(0, 1); ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fill(body, 'evenodd'); ctx.restore()
+  const g = ctx.createLinearGradient(0, 2, 0, 22)
+  g.addColorStop(0, tint(k.color, 0.45)); g.addColorStop(1, k.color)
+  ctx.fillStyle = g; ctx.fill(body, 'evenodd')
+  if (k.detail) {
+    const d = path2d(k.kind + ':detail', k.detail)
+    if (k.accent) { ctx.fillStyle = k.accent; ctx.fill(d) }
+    else { ctx.strokeStyle = DETAIL_INK; ctx.lineWidth = 2; ctx.lineCap = ctx.lineJoin = 'round'; ctx.stroke(d) }
+  }
   ctx.restore()
   if (label) {
     ctx.save()

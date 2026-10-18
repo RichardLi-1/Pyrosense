@@ -1,6 +1,7 @@
 // Scans: save the current one, start a fresh one, and browse past ones for review.
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { scanLabel } from '../lib/useDashboard'
+import { apiUrl } from '../lib/live'
 import type { ScanSession } from '../lib/types'
 
 export type ScanActions = {
@@ -116,7 +117,7 @@ export function ScansDrawer({ scans, current, reviewing, onClose }: {
             <li key={scan.session}>
               <button className={`scan${on ? ' on' : ''}`} onClick={() => { if (isCurrent) scans.close(); else scans.open(scan) }}
                       title={isCurrent ? 'This is the live scan' : 'Review this scan'}>
-                <span className="scan-thumb">{scan.map_png_url ? <img src={scan.map_png_url} alt="" loading="lazy" /> : <i />}</span>
+                <span className="scan-thumb">{scan.map_png_url ? <img src={apiUrl(scan.map_png_url)} alt="" loading="lazy" /> : <i />}</span>
                 <span className="scan-body">
                   <span className="scan-name">{scanLabel(scan)}{isCurrent && <em> · live</em>}</span>
                   <span className="scan-meta mono">{day(scan.started)} {time(scan.started)} · {duration(scan)} · {scan.n.toLocaleString()} readings</span>
