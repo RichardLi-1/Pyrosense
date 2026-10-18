@@ -105,10 +105,13 @@ button:disabled { opacity: 0.5; cursor: default; }
   background: radial-gradient(1200px 800px at 65% 45%, #0d1118 0%, #07090d 70%);
 }
 .f-top { position: absolute; z-index: 4; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; padding: 14px 28px; }
-.f-reading { position: absolute; left: 28px; top: 50%; transform: translateY(-52%); display: flex; flex-direction: column; gap: 12px; pointer-events: none; --rail-size: 48px; width: 340px; }
+.f-reading { position: absolute; left: 28px; top: 50%; transform: translateY(-52%); display: flex; flex-direction: column; gap: 10px; pointer-events: none; --rail-size: 48px; width: 340px; }
 /* one size for every number in the rail: the hero and the tiles read as equals */
 .f-reading .reading-value, .f-reading .tile-value { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: var(--rail-size); font-weight: 300; letter-spacing: -0.04em; line-height: 0.95; }
-.f-reading .tiles { grid-template-columns: repeat(2, 1fr); gap: 14px 20px; }
+.f-reading .tiles { grid-template-columns: repeat(2, 1fr); gap: 12px 20px; margin-top: 2px; }
+.f-reading .reading { gap: 4px; }
+.f-reading .sparkline { display: block; margin: 0; }
+.f-reading .attitude { margin-top: -2px; }
 .f-reading .reading-label { font-size: 15px; }
 .f-bottom { position: absolute; left: 28px; right: 28px; bottom: 18px; }
 

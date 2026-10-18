@@ -23,7 +23,7 @@ export default function Focus({ s, setUntil, view, select, setSource, gas }: Des
       <section className="f-reading">
         <span className="caption">{SCALE.label}</span>
         <Reading voc={s.voc} />
-        <Sparkline points={s.window} />
+        <Sparkline points={s.window} width={340} height={28} />
         <Attitude pose={s.pose} />
         <SensorTiles s={s} gas={gas} />
         <Crew s={s} select={select} colors={THEMES.focus.crew} />

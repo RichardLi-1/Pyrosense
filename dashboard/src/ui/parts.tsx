@@ -33,11 +33,11 @@ export function Reading({ voc }: { voc: number | null }) {
 /** Last 60 s of readings. */
 export function Sparkline({ points, width = 220, height = 36 }: { points: [number, number][]; width?: number; height?: number }) {
   if (points.length < 2) return <svg className="sparkline" width={width} height={height} />
-  const t1 = points[points.length - 1][0], t0 = t1 - 60_000
+  const t1 = points[points.length - 1][0], t0 = Math.max(points[0][0], t1 - 60_000), span = Math.max(1000, t1 - t0)
   const max = Math.max(SCALE.max * 0.1, ...points.map(([, v]) => v))
   const d = points
     .filter(([t]) => t >= t0)
-    .map(([t, v], i) => `${i ? 'L' : 'M'}${(((t - t0) / 60_000) * width).toFixed(1)},${(height - 2 - (v / max) * (height - 4)).toFixed(1)}`)
+    .map(([t, v], i) => `${i ? 'L' : 'M'}${(((t - t0) / span) * width).toFixed(1)},${(height - 2 - (v / max) * (height - 4)).toFixed(1)}`)
     .join('')
   const last = points[points.length - 1][1]
   return (
@@ -194,14 +194,16 @@ export function Waiting({ s }: { s: Dashboard }) {
 const deg = (r: number) => `${Math.round((r * 180) / Math.PI)}°`
 
 /** Roll / pitch / yaw of the selected wearer, one quiet line. Roll and pitch need an IMU. */
+/** Where the wearer is on the map (metres from the map origin) and which way they face. */
 export function Attitude({ pose }: { pose: Dashboard['pose'] }) {
   if (!pose) return null
   const yaw = ((pose.heading * 180) / Math.PI + 360) % 360
+  const m = (v: number) => `${v < 0 ? '\u2212' : ''}${Math.abs(v).toFixed(1)} m`
   return (
-    <span className="attitude mono" title="Roll · pitch · yaw (heading)">
-      {pose.roll != null && <>R {deg(pose.roll)} · </>}
-      {pose.pitch != null && <>P {deg(pose.pitch)} · </>}
-      Y {Math.round(yaw)}°
+    <span className="attitude mono" title="Position on the map (metres from origin) · heading">
+      X {m(pose.x)} · Y {m(pose.y)} · {Math.round(yaw)}°
+      {pose.roll != null && <> · R {deg(pose.roll)}</>}
+      {pose.pitch != null && <> · P {deg(pose.pitch)}</>}
     </span>
   )
 }
