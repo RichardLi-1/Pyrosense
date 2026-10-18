@@ -72,14 +72,14 @@ export class Plume {
     if (!(p.voc >= background + lift) && !(p.voc >= a)) return
     const lv = level(p.voc)
     if (p.voc >= a) {
-      this.blooms.push({ x: p.x, y: p.y, t: Date.now() - Math.max(0, ageMs), level: lv })
+      this.blooms.push({ x: p.x, y: p.y, t: Date.parse(p.ts), level: lv }) // the reading's own clock: ages stay right in replay
       if (this.blooms.length > MAX_BLOOMS) this.blooms.splice(0, this.blooms.length - MAX_BLOOMS)
     }
     // light readings drift a little; elevated ones a lot
     const n = p.voc >= a ? Math.min(MAX_PER_EVENT, Math.ceil((8 * (p.voc - a)) / a) + 2) : Math.min(3, 1 + Math.floor((p.voc - background) / (2 * lift)))
     const ageS = Math.max(0, ageMs / 1000)
     for (let i = 0; i < n; i++) {
-      const q: Particle = { x: p.x, y: p.y, born: Date.now() - ageMs, level: lv }
+      const q: Particle = { x: p.x, y: p.y, born: Date.parse(p.ts), level: lv }
       // a point from the past has already wandered: a coarse walk covering its age
       if (ageS > 0.5) {
         const steps = Math.min(40, Math.ceil(ageS / 5))
@@ -177,7 +177,7 @@ export class Plume {
     ctx.save()
     ctx.globalCompositeOperation = 'lighter'
     for (const b of this.blooms) {
-      const age = now - b.t
+      const age = Math.max(0, now - b.t)
       const pop = Math.min(1, age / 600) // swells in over the first moments
       const r = BLOOM_R_M[b.level] * scale * (0.5 + 0.5 * pop)
       const a = 0.5 * Math.pow(0.5, age / (HALF_LIFE_S * 1000))
@@ -188,7 +188,7 @@ export class Plume {
     ctx.globalAlpha = 1
     const d = Math.max(3, SPRITE_R_M * 2 * scale)
     if (opts.particles !== false) for (const q of this.parts) {
-      const a = 0.22 * GAIN_2D[q.level] * Math.pow(0.5, (now - q.born) / (HALF_LIFE_S * 1000))
+      const a = 0.22 * GAIN_2D[q.level] * Math.pow(0.5, Math.max(0, now - q.born) / (HALF_LIFE_S * 1000))
       if (a < 0.008) continue
       ctx.globalAlpha = a
       ctx.drawImage(this.sprite(q.level), sx(q.x) - d / 2, sy(q.y) - d / 2, d, d)
