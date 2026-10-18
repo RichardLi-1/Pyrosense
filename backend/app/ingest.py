@@ -26,6 +26,7 @@ class Ingest:
         self._pose_interval = 1.0 / max(settings.live_pose_hz, 0.1)
         self._last_pose_sent = 0.0
         self._clock_warned = 0.0
+        self._backlog_checked = False  # first /voc_points after (re)start: don't re-import points already stored
 
     async def on_message(self, topic: str, msg, recv_ns: int) -> None:
         if topic == TOPIC_POSE:
@@ -69,6 +70,21 @@ class Ingest:
 
     async def _on_points(self, msg) -> None:
         pts = points_from_pointcloud(msg)
+        if not self._backlog_checked:
+            # voc_mapper republishes its whole ring buffer. After a backend restart the session may already
+            # hold those readings, so treat the first cloud as already-seen and only ingest what follows.
+            self._backlog_checked = True
+            try:
+                existing = await self.db.count_readings(self.state.session) if self.db.connected else 0
+            except Exception:  # noqa: BLE001
+                existing = 0
+            if existing > 0 and len(pts):
+                self.state.tracker.new_points(pts)
+                self.state.n_samples = existing
+                log.info("session %s already has %d readings; skipped %d-point backlog", self.state.session, existing, len(pts))
+                if len(pts):
+                    self.state.push_voc(float(pts[-1, 3]), datetime.now(timezone.utc))
+                return
         t = point_times(msg)
         idx = self.state.tracker.new_index(pts, t)
         if len(idx) == 0:

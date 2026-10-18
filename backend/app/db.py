@@ -218,6 +218,10 @@ class Database:
             "map_w = COALESCE(EXCLUDED.map_w, sessions_meta.map_w), map_h = COALESCE(EXCLUDED.map_h, sessions_meta.map_h)",
             session, name, notes, map_png, ox, oy, res, w, h)
 
+    async def count_readings(self, session: str) -> int:
+        pool = self._require()
+        return int(await pool.fetchval("SELECT count(*) FROM readings WHERE session = $1", session))
+
     async def session_map_png(self, session: str) -> bytes | None:
         pool = self._require()
         return await pool.fetchval("SELECT map_png FROM sessions_meta WHERE session = $1", session)
