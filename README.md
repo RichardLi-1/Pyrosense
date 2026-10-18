@@ -39,8 +39,8 @@ Wearable indoor SLAM + gas sensing that builds a live map of airborne hazards in
 | USB-C PD power bank | 3 A minimum. Pi 5 caps USB output at 600 mA on a 3 A supply; C1 at 230 mA fits comfortably. | — |
 | MicroSD card | 32–64 GB, A2 / V30 rated. | Justin (Best Buy) |
 | USB-C SD card reader | For flashing from Mac. | Justin (Best Buy) |
-| 3D printer | For mounts. | Justin |
-| Hard hat (Waterloo Eng, yellow) | Demo helmet. LiDAR mount hot-glued on, removable after. | Justin |
+| Bambu Lab A1 3D Printer | For mounts. | Justin |
+| Hard hat (Firefighter hat) | Demo helmet. LiDAR mount hot-glued on, removable after. | Justin |
 | Straps / velcro | For body rig. | Tyler |
 
 ### Nice-to-have
@@ -118,6 +118,9 @@ The Pi never talks to the database. Only the laptop backend holds the Tiger Clou
 - Tiger Cloud: one service on the Free plan. Apply the schema with `psql "$DATABASE_URL" -f db/schema.sql`. Local fallback: the same schema on `timescale/timescaledb` in Docker.
 - A fake Pi publisher (`backend/tools/fake_pi.py`) emits the interface contract so backend + dashboard work can start before the hardware arrives.
 - `ros2 bag record` one good walk **and** save it as a session in Tiger Cloud. Either one can be replayed so dashboard dev can continue without hardware, and either is the fallback demo if the live run hiccups.
+- Vultr Ubuntu VM deployed using Docker Compose, with SSH access and Tailscale networking.
+- Porkbun DNS connects `pyrosense.us` to Vultr, with Nginx handling hosting and API routing.
+- Let's Encrypt secures HTTPS, with HTTP redirection, API access restrictions, and deployment testing.
 
 ---
 
