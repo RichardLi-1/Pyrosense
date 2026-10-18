@@ -25,7 +25,7 @@ const EYE_H = 1.6
 const FOV_OVERHEAD = 32
 const FOV_FIRST = 72
 const GAS_SIZE = 1.2 // m, billboard diameter: large, soft, overlapping, so puffs merge into one volume
-const PUFF_SIZE = 0.6 // m, the red prediction puff stays tighter and distinct
+const PUFF_SIZE = 1.1 // m, the red prediction puff: large enough to merge, still a distinct red cloud
 
 type Rect = { c0: number; r0: number; w: number; h: number } // grid pixels, image rows (row 0 = max y)
 

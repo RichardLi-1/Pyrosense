@@ -43,6 +43,17 @@ export default function Focus({ s, setUntil, view, setView, select, setSource, g
   useVoice(s.warnings, voice, !!review || s.until != null)
   const unread = Math.max(0, s.warnings.length - s.warningsSeen)
 
+  // the header may wrap to two rows on narrow windows; everything below it keys off its real height
+  const headerRef = useRef<HTMLElement>(null)
+  const [headerH, setHeaderH] = useState(88)
+  useEffect(() => {
+    const el = headerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => setHeaderH(Math.round(el.getBoundingClientRect().height)))
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
   const setLayer = useCallback((k: LayerKey, on: boolean) => setView((v) => ({ ...v, layers: { ...v.layers, [k]: on } })), [setView])
   const setFollow = useCallback((on: boolean) => setView((v) => ({ ...v, follow: on })), [setView])
   const setOnly = useCallback((only: string | null) => setView((v) => ({ ...v, only })), [setView])
@@ -68,13 +79,13 @@ export default function Focus({ s, setUntil, view, setView, select, setSource, g
   }, [armed, here, add])
 
   return (
-    <div className="design d-focus">
+    <div className="design d-focus" style={{ ["--header-h" as string]: `${headerH}px` }}>
       <MapStage theme={THEMES.focus} meta={s.meta} image={s.image} heat={s.heat} trail={s.trail} pose={s.pose} poses={s.poses} selected={s.selected!}
                 alerts={s.alerts} threshold={s.threshold} voc={s.voc} until={s.until} warnings={s.warnings} follow={view.follow} layers={view.layers} only={view.only} crew={s.crew}
                 marks={marks} onPick={armed ? onPick : null} setLayer={setLayer} setFollow={setFollow}
-                gas={gas} inset={{ left: 390, top: 88, right: 104, bottom: scrubber ? 124 : 72 }} />
+                gas={gas} inset={{ left: 390, top: headerH, right: 104, bottom: scrubber ? 124 : 72 }} />
       <Waiting s={s} />
-      <header className="f-top">
+      <header className="f-top" ref={headerRef}>
         <a className="brand" href="/landing/" title="About this project"><Logo height={60} /></a>
         <div className="row">
           <Status s={s} />

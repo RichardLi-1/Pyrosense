@@ -2,7 +2,6 @@
 import { forwardRef } from 'react'
 
 const Compass = forwardRef<SVGSVGElement, { size?: number; className?: string }>(function Compass({ size = 56, className }, ref) {
-  const r = size / 2
   return (
     <svg ref={ref} className={`compass${className ? ` ${className}` : ''}`} width={size} height={size} viewBox="0 0 56 56" aria-label="Compass">
       <circle cx="28" cy="28" r="26" fill="var(--compass-bg)" stroke="var(--line)" />
