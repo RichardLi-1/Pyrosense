@@ -10,7 +10,7 @@ React 18 + Vite, TypeScript. Rendering on `<canvas>` (not SVG, not D3 for the ma
 
 ```
 ┌──────────────────────────────────────────────────────────┬────────────────────────┐
-│  PROJECT_NAME            ● LIVE   session utsc-sw-14h    │   VOC INDEX            │
+│  PyroSense               ● LIVE   session utsc-sw-14h    │   VOC INDEX            │
 │                                                          │   ┌────────────────┐   │
 │                                                          │   │     183        │   │
 │                                                          │   │   MODERATE     │   │

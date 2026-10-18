@@ -1,4 +1,4 @@
-// A crisp miniature of the real PyroSafe dashboard (Focus design): full-bleed dark map with
+// A crisp miniature of the real PyroSense dashboard (Focus design): full-bleed dark map with
 // the floor plan centred, thermal ramp heat as crisp bands with contour lines, striped
 // predicted areas with "likely source" / "sample next" rings, thin per-firefighter trails,
 // hard-hat badges A/B/C; a left column with the big TVOC reading, level, sparkline, attitude,

@@ -1,4 +1,4 @@
-# Firefighter Hazard-Mapping System
+# PyroSense: Firefighter Hazard-Mapping System
 
 Wearable indoor SLAM + gas sensing that builds a live map of airborne hazards in an unknown building as a firefighter moves through it.
 

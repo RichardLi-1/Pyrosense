@@ -15,7 +15,7 @@ A person wears a 2D LiDAR + VOC sensor on a Raspberry Pi 5. As they walk a build
 
 **Pitch line:** *A wearable that maps a building's air as you walk it — live floor plan, your position, and a gas heat map — and flags exposure before you'd notice it yourself.*
 
-Project name: **TBD** (shortlist: Canary, Plume, Breathprint, Whiff, Scentry). Use `PROJECT_NAME` as a placeholder in code until decided.
+Project name: **PyroSense**.
 
 ## Team setup
 

@@ -55,7 +55,7 @@ const DOTS: [number, number][] = [
 
 export default function Logo({ height = 20 }: { height?: number }) {
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} height={height} width={(height * W) / H} aria-label="Hazard Map" role="img" fill="currentColor">
+    <svg viewBox={`0 0 ${W} ${H}`} height={height} width={(height * W) / H} aria-label="PyroSense" role="img" fill="currentColor">
       {DOTS.map(([x, y], i) => <circle key={i} cx={x.toFixed(2)} cy={y.toFixed(2)} r={DOT} />)}
     </svg>
   )
