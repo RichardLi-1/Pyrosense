@@ -1,5 +1,6 @@
 import type { GasModel } from '../lib/gasModel'
 import type { Dashboard } from '../lib/useDashboard'
+import type { ScanActions } from '../ui/scans'
 
 export type ViewOptions = { follow: boolean; showHeat: boolean; showTrail: boolean }
 
@@ -11,4 +12,5 @@ export type DesignProps = {
   view: ViewOptions
   gas: GasModel | null
   setSource: (kind: 'live' | 'demo') => void // Simulation / Real toggle
+  scans: ScanActions
 }

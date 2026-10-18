@@ -12,7 +12,7 @@ export type MapTheme = {
   icon: string // hard hat on the badge
   halo: string
   alert: string
-  next: string // next-best sample marker
+  next: string // next-best sample marker (the alert red: it is a call to action)
   heatBlend: GlobalCompositeOperation
   heatAlpha: number
   ink: Ink // contour line colours over the thermal field
@@ -26,19 +26,19 @@ export type MapTheme = {
 export const THEMES = {
   focus: {
     free: [255, 255, 255, 14], wall: [226, 230, 238, 235], grid: null,
-    trail: 'rgba(255,255,255,0.22)', badge: '#ffffff', crew: ['#ffffff', '#7dd3fc', '#c4b5fd', '#e2e8f0'], icon: '#0b0e14', halo: 'rgba(255,255,255,0.16)', alert: '#ff4d5e', next: '#5eead4',
+    trail: 'rgba(255,255,255,0.22)', badge: '#ffffff', crew: ['#ffffff', '#7dd3fc', '#c4b5fd', '#e2e8f0'], icon: '#0b0e14', halo: 'rgba(255,255,255,0.16)', alert: '#ff4d5e', next: '#ff4d5e',
     heatBlend: 'source-over', heatAlpha: 0.96, ink: LIGHT_INK,
     floor3d: '#141922', wall3d: '#3a4150', wallTop3d: '#e2e6ee', glow3d: 'additive',
   },
   paper: {
     free: [255, 255, 255, 255], wall: [24, 28, 36, 255], grid: 'rgba(24,28,36,0.05)',
-    trail: 'rgba(24,28,36,0.28)', badge: '#1f4fff', crew: ['#1f4fff', '#111827', '#7c3aed', '#0e7490'], icon: '#ffffff', halo: 'rgba(31,79,255,0.14)', alert: '#e5263c', next: '#0f766e',
+    trail: 'rgba(24,28,36,0.28)', badge: '#1f4fff', crew: ['#1f4fff', '#111827', '#7c3aed', '#0e7490'], icon: '#ffffff', halo: 'rgba(31,79,255,0.14)', alert: '#e5263c', next: '#e5263c',
     heatBlend: 'source-over', heatAlpha: 0.92, ink: DARK_INK,
     floor3d: '#ffffff', wall3d: '#d9d4c8', wallTop3d: '#181c24', glow3d: 'normal',
   },
   dusk: {
     free: [255, 255, 255, 14], wall: [160, 170, 200, 200], grid: 'rgba(255,255,255,0.025)',
-    trail: 'rgba(170,180,255,0.25)', badge: '#9db4ff', crew: ['#9db4ff', '#e0e7ff', '#f0abfc', '#a5f3fc'], icon: '#06070d', halo: 'rgba(157,180,255,0.18)', alert: '#ff5d6c', next: '#5eead4',
+    trail: 'rgba(170,180,255,0.25)', badge: '#9db4ff', crew: ['#9db4ff', '#e0e7ff', '#f0abfc', '#a5f3fc'], icon: '#06070d', halo: 'rgba(157,180,255,0.18)', alert: '#ff5d6c', next: '#ff5d6c',
     heatBlend: 'source-over', heatAlpha: 0.96, ink: LIGHT_INK,
     floor3d: '#161a2c', wall3d: '#3b4266', wallTop3d: '#a0aac8', glow3d: 'additive',
   },

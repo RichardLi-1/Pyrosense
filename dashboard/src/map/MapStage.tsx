@@ -50,7 +50,8 @@ export default function MapStage(props: MapProps & { legend?: boolean }) {
   const [horizon, setHorizon] = useState<number | null>(null)
   const gas = props.showHeat ? props.gas ?? null : null
   const model = gas?.source ?? null
-  const r = { ...props, recenter, onMoved, model, gas, horizon: mode === '2d' ? horizon : null }
+  const hasSource = !!model?.sources.some((src) => src.q >= SCALE.bands[0]) // forecasts only mean something with a real source
+  const r = { ...props, recenter, onMoved, model, gas, horizon: mode === '2d' && hasSource ? horizon : null }
   return (
     <>
       {mode === '2d' ? <MapView {...r} /> : <Suspense fallback={null}><Map3D {...r} firstPerson={mode === 'fp'} /></Suspense>}
@@ -66,7 +67,7 @@ export default function MapStage(props: MapProps & { legend?: boolean }) {
             {mode === 'fp' ? 'Look ahead' : 'Recenter'}
           </button>
         )}
-        {mode === '2d' && gas?.forecast && (
+        {mode === '2d' && gas?.forecast && hasSource && (
           <div className="map-seg" role="group" aria-label="Forecast" title="Projected spread by diffusion through the mapped floor plan (no airflow model)">
             <button className={horizon == null ? 'on' : ''} onClick={() => setHorizon(null)}>Now</button>
             {HORIZONS.map((h) => (

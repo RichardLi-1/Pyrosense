@@ -9,6 +9,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { bandImage, isolines, strokeIsolines } from '../lib/heatImage'
 import { gasCloud, predict, PRIOR_WEIGHT, type GasCloud } from '../lib/predict'
 import type { Source } from '../lib/sourceModel'
+import { SCALE } from '../lib/colors'
 import { chooseNext, type NextSample } from '../lib/nextSample'
 import { DEFAULT_WEARER, type MapMeta } from '../lib/types'
 import { drawHardHat } from './theme'
@@ -162,7 +163,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     // next-best sample: a dotted ring with a crosshair, where the GP is least sure
     const nextGroup = new THREE.Group()
     scene.add(nextGroup)
-    const nextMat = new THREE.LineDashedMaterial({ dashSize: 0.08, gapSize: 0.1, transparent: true, opacity: 0.95 })
+    const nextMat = new THREE.LineBasicMaterial({ transparent: true, opacity: 0.95 })
 
     // wearers, created as they appear
     const people = new Map<string, Person>()
@@ -308,7 +309,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       setSources(sources) {
         for (const c of [...sourceGroup.children]) { sourceGroup.remove(c); (c as THREE.Line).geometry.dispose() }
         for (const s of sources) {
-          if (s.q < 120) continue
+          if (s.q < SCALE.bands[0]) continue // a blip below the moderate band is not a source
           const pts = Array.from({ length: 65 }, (_, i) => {
             const a = (i / 64) * Math.PI * 2
             return new THREE.Vector3(s.x + Math.cos(a) * 0.9, 0.04, -(s.y + Math.sin(a) * 0.9))
@@ -321,15 +322,11 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       setNext(n) {
         for (const c of [...nextGroup.children]) { nextGroup.remove(c); (c as THREE.Line).geometry.dispose() }
         if (!n) return
-        const ring = Array.from({ length: 65 }, (_, i) => {
-          const a = (i / 64) * Math.PI * 2
-          return new THREE.Vector3(n.x + Math.cos(a) * n.r, 0.05, -(n.y + Math.sin(a) * n.r))
-        })
-        const cross = [new THREE.Vector3(n.x - 0.25, 0.05, -n.y), new THREE.Vector3(n.x + 0.25, 0.05, -n.y),
-                       new THREE.Vector3(n.x, 0.05, -(n.y - 0.25)), new THREE.Vector3(n.x, 0.05, -(n.y + 0.25))]
-        const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(ring), nextMat)
-        line.computeLineDistances()
-        nextGroup.add(line, new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(cross), nextMat))
+        // a small × on the floor, in the alert red; no ring in 3D
+        const k = 0.22
+        const cross = [new THREE.Vector3(n.x - k, 0.05, -(n.y - k)), new THREE.Vector3(n.x + k, 0.05, -(n.y + k)),
+                       new THREE.Vector3(n.x - k, 0.05, -(n.y + k)), new THREE.Vector3(n.x + k, 0.05, -(n.y - k))]
+        nextGroup.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(cross), nextMat))
       },
       setTheme,
       recenter() {

@@ -45,7 +45,7 @@ export default function App() {
 }
 
 function Dashboard({ source, setSource }: { source: DataSource; setSource: (kind: 'live' | 'demo') => void }) {
-  const { s, setUntil, loadSummary, select } = useDashboard(source)
+  const { s, setUntil, loadSummary, select, scans } = useDashboard(source)
   const [design, setDesign] = useState<DesignName>(initialDesign)
   const [view, setView] = useState<ViewOptions>({ follow: false, showHeat: true, showTrail: true })
 
@@ -69,7 +69,7 @@ function Dashboard({ source, setSource }: { source: DataSource; setSource: (kind
 
   const gas = useGasModel(s.meta, s.image, s.heat, view.showHeat)
   const Design = DESIGNS[design]
-  const props: DesignProps = useMemo(() => ({ s, setUntil, loadSummary, view, select, gas, setSource }), [s, setUntil, loadSummary, view, select, gas, setSource])
+  const props: DesignProps = useMemo(() => ({ s, setUntil, loadSummary, view, select, gas, setSource, scans }), [s, setUntil, loadSummary, view, select, gas, setSource, scans])
   return (
     <div className={`t-${design}`}>
       <Design {...props} />
