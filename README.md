@@ -188,8 +188,9 @@ plus periodic `/map` occupancy grid updates (width, height, resolution, origin, 
 | Person | Owns |
 |---|---|
 | Tyler | Pi bring-up, ROS 2, LiDAR + sensor drivers, SLAM, fusion node, launch file |
-| Justin | 3D printed mounts + physical rig, then backend + gas field estimation + Tiger Cloud schema / db writer |
+| Justin | 3D printed mounts + physical rig, backend + gas field estimation + Tiger Cloud schema / DB writer |
 | Richard | Dashboard frontend, rosbridge integration, Foxglove debugging, replay/history views (Tiger Cloud queries) |
+| Jessica | Cloud infrastructure, Vultr deployment, Docker, networking, DNS, HTTPS, and API security |
 
 (Adjust as needed — the only hard boundary is the JSON interface above.)
 
@@ -227,5 +228,5 @@ plus periodic `/map` occupancy grid updates (width, height, resolution, origin, 
 
 - Arrive ~7:30, leave ~7:00.
 - LiDAR + VOC sensor shipment arrives ~6 PM.
-- Justin bringing: 3D printer, hard hat, microSD + reader, VR headset (Meta Quest).
+- Justin bringing: 3D printer, hard hat, microSD + reader.
 - Tyler bringing: Pi 5, LiDAR, VOC sensor, straps/velcro, misc hardware.
