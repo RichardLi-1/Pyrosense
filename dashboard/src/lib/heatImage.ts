@@ -1,6 +1,6 @@
 // Render a VOC field as level bands (good / moderate / poor / hazardous): a light fill
 // per band plus smooth vector contour lines where the level changes. No blur.
-import { level, type Level } from './colors'
+import { SCALE, level, type Level } from './colors'
 import type { HeatCell } from './types'
 import { CELL_SIZE } from './types'
 
@@ -95,7 +95,7 @@ export type Isoline = { level: Level; rgb: [number, number, number]; segs: Float
 const CASES: number[][] = [[], [3, 0], [0, 1], [3, 1], [1, 2], [3, 2, 0, 1], [0, 2], [3, 2], [2, 3], [0, 2],
                            [0, 3, 1, 2], [1, 2], [1, 3], [0, 1], [0, 3], []]
 
-/** Smooth contour lines where the field crosses each level boundary (100, 250, 400). */
+/** Smooth contour lines where the field crosses each level boundary (SCALE.bands). */
 export function isolines(g: Grid, opts: { minSupport?: number; prior?: Prior; priorWeight?: number } = {}): Isoline[] {
   const { minSupport = 0.3, prior, priorWeight = 0.5 } = opts
   const { cols: W, rows: H, x0, y0, res } = g
@@ -104,7 +104,8 @@ export function isolines(g: Grid, opts: { minSupport?: number; prior?: Prior; pr
   for (let i = 0; i < v.length; i++) v[i] = est(i)
   const measured = (i: number) => prior == null || g.den[i] / (g.den[i] + priorWeight) >= 0.5
   const out: Isoline[] = []
-  for (const [t, name] of [[100, 'moderate'], [250, 'poor'], [400, 'alert']] as const) {
+  const [b0, b1, b2] = SCALE.bands
+  for (const [t, name] of [[b0, 'moderate'], [b1, 'poor'], [b2, 'alert']] as const) {
     const segs: number[] = []
     for (let r = 0; r < H - 1; r++) for (let c = 0; c < W - 1; c++) {
       const bl = r * W + c, br = bl + 1, tl = bl + W, tr = tl + 1

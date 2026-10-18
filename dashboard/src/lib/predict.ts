@@ -9,7 +9,7 @@
 // Height (3D): the sensor only ever measures at chest height, so the vertical profile is
 // an assumption: gas is centred on sensor height and spreads further up and down where
 // the floor estimate is less certain. Shown as a particle cloud, never as measurements.
-import { level } from './colors'
+import { SCALE, level } from './colors'
 import { BAND_RGB, kernelGrid, type Grid } from './heatImage'
 import type { SourceModel } from './sourceModel'
 import type { HeatCell } from './types'
@@ -55,7 +55,7 @@ export function predict(cells: HeatCell[], bounds: { x0: number; y0: number; x1:
  * The predicted-only part as a Grid for bandImage/isolines: cells where data is thin
  * (conf < 0.5) get the estimate (den = 1); measured cells are left out (den = 0).
  */
-export function predictedOnly(pred: Prediction, minVoc = 100): Grid {
+export function predictedOnly(pred: Prediction, minVoc = SCALE.bands[0]): Grid {
   const { grid, est, conf } = pred
   const n = grid.cols * grid.rows
   const num = new Float32Array(n), den = new Float32Array(n)
@@ -82,7 +82,7 @@ export function gasCloud(pred: Prediction, isFree: (x: number, y: number) => boo
   for (let r = 0; r < grid.rows; r++) for (let c = 0; c < grid.cols; c++) {
     const i = r * grid.cols + c
     const v = est(i)
-    if (v < 100) continue
+    if (v < SCALE.bands[0]) continue
     if (!isFree(grid.x0 + (c + 0.5) * grid.res, grid.y0 + (r + 0.5) * grid.res)) continue
     weights[i] = Math.min(1, (v - 80) / 320) ** 1.3 * (0.3 + 0.7 * conf(i))
     total += weights[i]
@@ -107,7 +107,7 @@ export function gasCloud(pred: Prediction, isFree: (x: number, y: number) => boo
         const h = Math.min(2.6, Math.max(0.05, SENSOR_HEIGHT + gauss() * spread))
         pos.push(x, h, -y)
         col.push(cr / 255, cg / 255, cb / 255)
-        alp.push((0.1 + 0.3 * Math.min(1, (v - 100) / 300)) * (0.4 + 0.6 * cf))
+        alp.push((0.1 + 0.3 * Math.min(1, (v - SCALE.bands[0]) / (SCALE.bands[2] - SCALE.bands[0]))) * (0.4 + 0.6 * cf))
         ph.push(rand() * Math.PI * 2)
       }
     }
