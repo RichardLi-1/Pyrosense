@@ -218,6 +218,25 @@ class Database:
             "map_w = COALESCE(EXCLUDED.map_w, sessions_meta.map_w), map_h = COALESCE(EXCLUDED.map_h, sessions_meta.map_h)",
             session, name, notes, map_png, ox, oy, res, w, h)
 
+    async def wait_connected(self, timeout: float = 8.0) -> bool:
+        import asyncio as _a
+        t0 = _a.get_event_loop().time()
+        while self.pool is None and _a.get_event_loop().time() - t0 < timeout:
+            await _a.sleep(0.2)
+        return self.pool is not None
+
+    async def latest_session(self, max_age_s: float) -> str | None:
+        """Most recent session whose last reading is younger than max_age_s (to resume after a restart)."""
+        if self.pool is None:
+            return None
+        row = await self.pool.fetchrow(
+            "SELECT session, max(ts) AS last FROM readings GROUP BY session ORDER BY last DESC LIMIT 1")
+        if not row or row["last"] is None:
+            return None
+        from datetime import datetime, timezone
+        age = (datetime.now(timezone.utc) - row["last"]).total_seconds()
+        return row["session"] if age <= max_age_s else None
+
     async def count_readings(self, session: str) -> int:
         pool = self._require()
         return int(await pool.fetchval("SELECT count(*) FROM readings WHERE session = $1", session))

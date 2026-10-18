@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -48,6 +49,17 @@ def create_app(settings: Settings | None = None, *, connect_bridge: bool = True)
                  "on" if settings.database_url else "off", "on" if st.summarizer.enabled else "fallback",
                  "elevenlabs" if settings.elevenlabs_api_key else "browser", settings.warn_threshold)
         await st.db.start()
+        # Resume the scan that was running before a restart/redeploy instead of starting a new id,
+        # unless SESSION is pinned in the environment or the last reading is more than 10 min old.
+        if not os.environ.get("SESSION") and settings.database_url:
+            try:
+                if await st.db.wait_connected():
+                    prev = await st.db.latest_session(600)
+                    if prev and prev != st.live.session:
+                        st.live.new_session(prev)
+                        log.info("resumed session %s", prev)
+            except Exception as e:  # noqa: BLE001
+                log.warning("could not look up the previous session: %s", e)
         tasks = []
         if connect_bridge:
             tasks.append(asyncio.create_task(st.bridge.run_forever(), name="bridge"))
