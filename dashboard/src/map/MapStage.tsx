@@ -1,6 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { RAMP_BANDS, SCALE, levelRanges, rampGradient, rampT } from '../lib/colors'
-import { HORIZONS } from '../lib/forecast'
 import { responderLabel } from '../lib/types'
 import { LAYERS, type LayerKey, type Layers } from './layers'
 import Compass from '../ui/Compass'
@@ -93,11 +92,9 @@ export default function MapStage(props: StageProps) {
     return () => window.removeEventListener('keydown', onKey)
   }, [doRecenter])
 
-  const [horizon, setHorizon] = useState<number | null>(null)
   const gas = props.gas ?? null
   const model = gas?.source ?? null
-  const hasSource = !!model?.sources.some((src) => src.q >= SCALE.bands[0]) // forecasts only mean something with a real source
-  const r = { ...props, recenter, onMoved, model, gas, horizon: mode === '2d' && hasSource && props.layers.gas ? horizon : null }
+  const r = { ...props, recenter, onMoved, model, gas, horizon: null }
   return (
     <>
       {mode === '2d' ? <MapView {...r} /> : <Suspense fallback={null}><Map3D {...r} firstPerson={mode === 'fp'} /></Suspense>}
@@ -123,14 +120,6 @@ export default function MapStage(props: StageProps) {
             </svg>
             {props.follow ? 'Following' : 'Follow'}{props.crew.length > 1 ? ` ${responderLabel(props.crew, props.selected)}` : ''}
           </button>
-        )}
-        {mode === '2d' && props.layers.gas && gas?.forecast && hasSource && (
-          <div className="map-seg" role="group" aria-label="Forecast" title="Projected spread by diffusion through the mapped floor plan (no airflow model)">
-            <button className={horizon == null ? 'on' : ''} onClick={() => setHorizon(null)}>Now</button>
-            {HORIZONS.map((h) => (
-              <button key={h} className={horizon === h ? 'on' : ''} onClick={() => setHorizon(h)}>+{h / 60} min</button>
-            ))}
-          </div>
         )}
         <div className="map-seg" role="group" aria-label="View">
           {MODES.map(({ m, label }) => (

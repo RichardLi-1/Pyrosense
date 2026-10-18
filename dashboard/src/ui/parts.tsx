@@ -1,9 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { LEVEL_LABEL, SCALE, level, levelColor } from '../lib/colors'
 import { responderLabel, type Sensor } from '../lib/types'
-import { bearing, chooseNext, explainMovement, gasKind, predictMovement } from '../lib/nextSample'
-import type { GasModel } from '../lib/gasModel'
-import { sampleAt } from '../lib/gasModel'
 import type { Dashboard } from '../lib/useDashboard'
 import type { Alert, TrailPoint } from '../lib/types'
 
@@ -244,13 +241,8 @@ export function SensorPanel({ sensor }: { sensor: Sensor | null }) {
   )
 }
 
-/**
- * Layer 4, what it means for the wearer: cumulative exposure this session (ppb·min, the
- * integral of the reading over time), from the forecast whether this spot is projected
- * to cross the alert threshold within five minutes, and where the gas is predicted to move next (GP variance).
- */
-type OutlookNumbers = { dose: number | null; doseSeries: [number, number][]; eta: number | null; peak: number | null; next: ReturnType<typeof chooseNext> | null }
-function outlookNumbers(s: Dashboard, gas: GasModel | null): OutlookNumbers {
+/** What the session adds up to for the wearer: cumulative exposure (reading integrated over time). */
+function exposure(s: Dashboard): { dose: number | null; doseSeries: [number, number][] } {
   const pts = s.history.filter((p) => (p.wearer ?? 'A') === s.selected)
   let dose = 0
   const doseSeries: [number, number][] = [] // cumulative exposure over time, for the tile sparkline
@@ -260,36 +252,17 @@ function outlookNumbers(s: Dashboard, gas: GasModel | null): OutlookNumbers {
     if (dt > 0 && dt < 2) dose += ((pts[i].voc + pts[i - 1].voc) / 2) * dt
     doseSeries.push([t, dose])
   }
-  let eta: number | null = null, peak: number | null = null
-  const fc = gas?.forecast
-  if (fc && s.pose && s.until == null) {
-    for (let h = 0; h < fc.horizons.length; h++) {
-      const v = sampleAt(fc, fc.mean[h], s.pose.x, s.pose.y)
-      if (Number.isNaN(v)) continue
-      peak = Math.max(peak ?? 0, v)
-      if (v >= s.threshold && eta == null) eta = fc.horizons[h]
-    }
-  }
-  const next = gas && s.until == null ? chooseNext(gas.next, s.pose, gas.field) : null
-  return { dose: pts.length > 1 ? dose : null, doseSeries, eta, peak, next }
+  return { dose: pts.length > 1 ? dose : null, doseSeries }
 }
 
 const kfmt = (v: number) => (v >= 10_000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(0))
 
-export function Outlook({ s, gas }: { s: Dashboard; gas: GasModel | null }) {
-  const { dose, eta, peak, next: nx } = outlookNumbers(s, gas)
-  if (dose == null && eta == null && !nx) return null
-  const k = kfmt
+export function Outlook({ s }: { s: Dashboard }) {
+  const { dose } = exposure(s)
+  if (dose == null) return null
   return (
-    <dl className="sensor outlook" title="Exposure = reading integrated over time. Projection = diffusion forecast at this position.">
-      {dose != null && <div className="sensor-row"><dt>exposure</dt><dd className="mono">{k(dose)}<span className="sensor-unit">{SCALE.short || 'idx'}·min</span></dd></div>}
-      {eta != null
-        ? <div className="sensor-row sensor-warn"><dt>projected</dt><dd>&gt; {SCALE.short ? `${s.threshold} ${SCALE.short}` : s.threshold} here in ≤{eta / 60} min</dd></div>
-        : peak != null && <div className="sensor-row"><dt>projected</dt><dd className="mono">{peak.toFixed(0)}<span className="sensor-unit">{SCALE.short} in 5 min</span></dd></div>}
-      {nx && <div className="sensor-row sensor-next" title="Where one more reading would most reduce the map's uncertainty (GP variance, weighted toward predicted-elevated areas)">
-        <dt>gas movement prediction</dt>
-        <dd className="mono">{s.pose ? <>{nx.dist.toFixed(0)}<span className="sensor-unit">m {bearing(s.pose, nx)}</span></> : <>({nx.x.toFixed(0)}, {nx.y.toFixed(0)})</>}</dd>
-      </div>}
+    <dl className="sensor outlook" title="Exposure = reading integrated over time.">
+      <div className="sensor-row"><dt>exposure</dt><dd className="mono">{kfmt(dose)}<span className="sensor-unit">{SCALE.short || 'idx'}·min</span></dd></div>
     </dl>
   )
 }
@@ -307,14 +280,12 @@ function Tile({ caption, value, unit, title, tone, spark, note }: { caption: str
 
 /**
  * The secondary channels as big live numbers under the hero reading: the SGP30's other
- * outputs (eCO₂, raw H₂, raw ethanol) and what the session adds up to (exposure, the
- * five-minute projection at this spot, gas movement prediction).
+ * outputs (eCO₂, raw H₂, raw ethanol) and what the session adds up to (exposure).
  */
-export function SensorTiles({ s, gas }: { s: Dashboard; gas: GasModel | null }) {
+export function SensorTiles({ s }: { s: Dashboard }) {
   const sensor = s.sensor
-  const { dose, doseSeries, eta, peak, next: nx } = outlookNumbers(s, gas)
-  const mv = gas && s.until == null ? predictMovement(gas, s.pose, nx) : null
-  if (!sensor && dose == null && eta == null && !mv) return null
+  const { dose, doseSeries } = exposure(s)
+  if (!sensor && dose == null) return null
   const w = s.sensorWindow
   const t60 = Date.now() - 60_000
   const recent = doseSeries.filter(([t]) => t >= t60)
@@ -328,14 +299,6 @@ export function SensorTiles({ s, gas }: { s: Dashboard; gas: GasModel | null }) 
         <Tile caption="Raw EtOH" value={n(sensor.raw_ethanol)} spark={w.raw_ethanol} />
       </>}
       {dose != null && <Tile caption={`Exposure · ${unit}·min`} value={kfmt(dose)} title="Reading integrated over this session" spark={recent} />}
-      {eta != null
-        ? <Tile caption="Projected" value={`≤${eta / 60}`} unit="min to alert" tone="warn" title={`Forecast to pass ${s.threshold} here`} />
-        : peak != null && <Tile caption="Projected" value={peak.toFixed(0)} unit="in 5 min" title="Diffusion forecast at this position" />}
-      {mv && <Tile caption="Gas movement prediction"
-                   value={s.pose ? Math.hypot(mv.x - s.pose.x, mv.y - s.pose.y).toFixed(0) : `${mv.x.toFixed(0)}, ${mv.y.toFixed(0)}`}
-                   unit={s.pose ? `m ${bearing(s.pose, mv)}` : undefined} tone="next"
-                   title="Where the gas is predicted to be heading, from the diffusion forecast and the GP field"
-                   note={explainMovement(mv, gasKind(s.window, s.sensorWindow.eco2)).join('\n')} />}
       {sensor && (sensor.temperature != null || sensor.humidity != null || !sensor.warmed_up) && (
         <span className="tiles-note">
           {sensor.temperature != null && <>{sensor.temperature.toFixed(1)} °C</>}

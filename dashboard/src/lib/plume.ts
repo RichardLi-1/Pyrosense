@@ -3,11 +3,11 @@
 // gas found ten minutes ago is still visibly "somewhere around here".
 //
 //   bloom     one radial splat per elevated reading at the wearer (yellow / orange / red by
-//             level, ~1 m growing with level), fading with the same 2 min half-life, so
+//             level, ~1 m growing with level), fading with the same 45 s half-life, so
 //             walking while elevated leaves a coloured trail
 //   particles N per elevated reading (N ∝ excess over the moderate band, ≤ 40), Brownian
 //             steps blocked by walls, a slight drift up the forecast gradient, alpha
-//             half-life 2 min, at most 4000 (oldest dropped first)
+//             half-life 45 s, at most 4000 (oldest dropped first)
 //
 // Both are rebuilt from the trail in replay, so scrubbing shows the cloud as it was.
 import { SCALE, level, rampColor, type Level } from './colors'
@@ -20,7 +20,7 @@ type Particle = { x: number; y: number; born: number; level: Level }
 
 const MAX_BLOOMS = 1500
 const BLOOM_R_M: Record<Level, number> = { good: 0.7, moderate: 0.9, poor: 1.2, alert: 1.5 }
-const HALF_LIFE_S = 120 // a brief whiff fades in a few minutes
+const HALF_LIFE_S = 45 // a brief whiff is gone within a couple of minutes
 const MAX_PARTICLES = 4000
 const MAX_PER_EVENT = 40
 const SIGMA = 0.75 // m/√s: ~0.1 m per frame at 60 fps, so puffs thin out visibly

@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { SCALE } from '../lib/colors'
 import { bandImage, isolines, kernelGrid, layerGrid, strokeIsolines, type HeatImage, type Isoline } from '../lib/heatImage'
-import { predict, predictedOnly } from '../lib/predict'
 import { drawMark, markKind } from '../lib/marks'
 import { Plume, type FreeMask } from '../lib/plume'
 import { DisplayField } from '../lib/diffuse'
@@ -22,15 +21,6 @@ function hexA(color: string, a: number): string {
 
 const SIGMA_M = 0.3 // heat spreads ~1 m around each reading: hugs the path, no blobs
 
-/** Diagonal stripes, used to cut predicted areas so they read as "not measured". */
-function stripePattern(ctx: CanvasRenderingContext2D) {
-  const c = document.createElement('canvas')
-  c.width = c.height = 8
-  const g = c.getContext('2d')!
-  g.strokeStyle = '#000'; g.lineWidth = 3
-  g.beginPath(); g.moveTo(-2, 10); g.lineTo(10, -2); g.moveTo(6, 10); g.lineTo(10, 6); g.moveTo(-2, 2); g.lineTo(2, -2); g.stroke()
-  return ctx.createPattern(c, 'repeat')!
-}
 
 export default function MapView(props: RendererProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -52,7 +42,7 @@ export default function MapView(props: RendererProps) {
     const c = Math.floor((x - origin[0]) / res), r = h - 1 - Math.floor((y - origin[1]) / res)
     return c >= 0 && r >= 0 && c < w && r < h && m.data[r * w + c] === 1
   }
-  const { image, meta, theme, heat: cells, recenter, onMoved, model, gas, horizon } = props
+  const { image, meta, theme, heat: cells, recenter, onMoved, gas } = props
   useEffect(() => {
     if (!image || !meta) return
     const c = document.createElement('canvas')
@@ -82,43 +72,23 @@ export default function MapView(props: RendererProps) {
     free.current = mc
   }, [image, meta, theme])
 
-  // Heat. With the gas model: the GP field (mean where confident, opacity = confidence),
-  // or a forecast horizon. Before the model has run: crisp bands from the kernel-smoothed cells.
+  // Heat: the measured field only. With the gas model, the GP mean on every passable cell it
+  // reaches, fading with confidence; before the model has run, kernel-smoothed cells. Shown
+  // through the diffusing display field either way.
   const heat = useRef<HeatImage | null>(null)
   const contours = useRef<Isoline[]>([])
-  const predicted = useRef<{ img: HeatImage; lines: Isoline[] } | null>(null)
   useEffect(() => {
     const field = gas?.field
-    const fc = gas?.forecast
-    if (horizon != null && fc) {
-      // projection: everything striped, nothing claims to be measured
-      const h = Math.max(0, fc.horizons.indexOf(horizon))
-      const g = layerGrid(fc, fc.mean[h], null, 0.1)
-      for (let i = 0; i < g.den.length; i++) if (g.num[i] < SCALE.bands[0] * 0.8) g.den[i] = 0
-      heat.current = null; contours.current = []
-      display.current.clear()
-      predicted.current = { img: bandImage(g, { minSupport: 0.5, alphaScale: 3.4 }), lines: isolines(g, { minSupport: 0.5 }) }
-      return
-    }
     if (field) {
       const g = layerGrid(field, field.mean, field.conf, 0.1)
-      // shown through the diffusing display field on every passable cell the GP reaches,
-      // fading with distance (alpha 0.2 + 0.8·conf) rather than ending at a confidence cut
       display.current.setTarget(g, (i) => g.num[i], (i) => g.conf[i] > 0, (i) => 0.2 + 0.8 * g.conf[i], isFree, field.base)
-      predicted.current = null // the main field is continuous; stripes are only for forecast horizons
       return
     }
     const g = kernelGrid(cells, SIGMA_M, 0.05)
     if (g) display.current.setTarget(g, (i) => (g.den[i] > 0 ? g.num[i] / g.den[i] : NaN), (i) => g.den[i] >= 0.3,
                                      (i) => Math.min(1, g.den[i] / 0.9), isFree, 0.2 * SCALE.bands[0])
     else { display.current.clear(); heat.current = null; contours.current = [] }
-    if (!model || !cells.length) { predicted.current = null; return }
-    const bounds = { x0: model.x0, y0: model.y0, x1: model.x0 + model.cols * model.res, y1: model.y0 + model.rows * model.res }
-    const pred = predict(cells, bounds, model, SIGMA_M, model.res)
-    if (!pred) { predicted.current = null; return }
-    const pg = predictedOnly(pred)
-    predicted.current = { img: bandImage(pg, { minSupport: 0.5, alphaScale: 3.2 }), lines: isolines(pg, { minSupport: 0.5 }) }
-  }, [gas, horizon, model, cells])
+  }, [gas, cells])
 
   // Uncertainty: fog density = GP posterior sd / σf
   const fog = useRef<HeatImage | null>(null)
@@ -133,9 +103,6 @@ export default function MapView(props: RendererProps) {
     const ctx = canvas.getContext('2d')!
     const layer = document.createElement('canvas')
     const lctx = layer.getContext('2d')!
-    const play = document.createElement('canvas')
-    const pctx = play.getContext('2d')!
-    const stripes = stripePattern(pctx)
     let raf = 0
     let cam: Camera | null = null
     let lastFrame = 0
@@ -294,33 +261,9 @@ export default function MapView(props: RendererProps) {
       }
       lastFrame = now
 
-      // predicted areas: striped band fills + thin contours, plus likely sources
-      const pr = predicted.current
-      if (P.layers.gas && pr) {
-        if (play.width !== canvas.width || play.height !== canvas.height) { play.width = canvas.width; play.height = canvas.height }
-        pctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-        pctx.globalCompositeOperation = 'source-over'
-        pctx.clearRect(0, 0, w, h)
-        pctx.imageSmoothingEnabled = true
-        pctx.drawImage(pr.img.canvas, sx(pr.img.x0), sy(pr.img.y1), pr.img.w * c.scale, pr.img.h * c.scale)
-        pctx.globalCompositeOperation = 'destination-out'
-        pctx.setTransform(1, 0, 0, 1, 0, 0)
-        pctx.fillStyle = stripes
-        pctx.fillRect(0, 0, play.width, play.height)
-        pctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-        pctx.globalCompositeOperation = 'source-over'
-        pctx.globalAlpha = 0.55
-        strokeIsolines(pctx, pr.lines, sx, sy, 1, T.ink)
-        pctx.globalAlpha = 1
-        ctx.save()
-        ctx.setTransform(1, 0, 0, 1, 0, 0)
-        ctx.globalCompositeOperation = T.heatBlend
-        ctx.drawImage(play, 0, 0)
-        ctx.restore()
-      }
       // uncertainty fog, clipped to scanned free space like the heat
       const fg = fog.current
-      if (P.layers.uncertainty && fg && mapRect && free.current && P.horizon == null) {
+      if (P.layers.uncertainty && fg && mapRect && free.current) {
         if (layer.width !== canvas.width || layer.height !== canvas.height) { layer.width = canvas.width; layer.height = canvas.height }
         lctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         lctx.globalCompositeOperation = 'source-over'
@@ -333,22 +276,6 @@ export default function MapView(props: RendererProps) {
         ctx.save()
         ctx.setTransform(1, 0, 0, 1, 0, 0)
         ctx.drawImage(layer, 0, 0)
-        ctx.restore()
-      }
-      if (P.layers.source && P.model && P.horizon == null) {
-        ctx.save()
-        ctx.setLineDash([3, 4])
-        ctx.lineWidth = 1.25
-        ctx.strokeStyle = T.alert
-        ctx.fillStyle = T.alert
-        ctx.font = '500 10px Inter, system-ui, sans-serif'
-        ctx.textAlign = 'center'
-        for (const src of P.model.sources) {
-          if (src.q < SCALE.bands[0]) continue // a blip below the moderate band is not a source
-          const x = sx(src.x), y = sy(src.y), r = 0.9 * c.scale
-          ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke()
-          ctx.fillText('likely source', x, y - r - 6)
-        }
         ctx.restore()
       }
 

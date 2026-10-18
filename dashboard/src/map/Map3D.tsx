@@ -1,15 +1,12 @@
 // 3D view built from the 2D data: walls extruded from the occupancy grid, the floor
-// painted with the VOC field (measured, else predicted), and a drifting particle cloud
-// for predicted gas in the air, including in rooms nobody has entered yet.
+// painted with the measured VOC field, and a drifting live cloud of blooms and particles
+// from the readings taken so far.
 // Two cameras: overhead orbit, and first person at the selected wearer's eyes.
 // World axes: map x -> x, map y -> -z, height -> y.
 import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import { bandImage, isolines, strokeIsolines } from '../lib/heatImage'
-import { gasCloud, predict, PRIOR_WEIGHT, type GasCloud } from '../lib/predict'
-import type { Source } from '../lib/sourceModel'
-import { SCALE } from '../lib/colors'
+import { bandImage, isolines, layerGrid, strokeIsolines } from '../lib/heatImage'
 import { drawMark, markKind, type Mark } from '../lib/marks'
 import { Plume } from '../lib/plume'
 import Compass from '../ui/Compass'
@@ -97,8 +94,6 @@ type Person = { group: THREE.Group; body: THREE.Group; ring: THREE.Mesh; stem: T
 type Api = {
   setWalls: (rects: Rect[], meta: MapMeta) => void
   setFloor: (canvas: HTMLCanvasElement, meta: MapMeta) => void
-  setGas: (cloud: GasCloud) => void
-  setSources: (sources: Source[]) => void
   setPlumeMask: (m: { data: Uint8Array; meta: MapMeta }) => void
   setMarks: (marks: Mark[]) => void
   setTheme: () => void
@@ -159,9 +154,6 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       vertexShader: GAS_VERT, fragmentShader: GAS_FRAG, transparent: true, depthWrite: false,
       uniforms: { uTime: { value: 0 }, uScale: { value: 1 }, uMaxSize: { value: 220 }, uAlpha: { value: 1 } },
     })
-    const gas = new THREE.Points(new THREE.BufferGeometry(), gasMat)
-    gas.frustumCulled = false
-    scene.add(gas)
     // live cloud: the blooms and particles the 2D map shows, as puffs around sensor height
     const liveMat = gasMat.clone()
     liveMat.blending = THREE.AdditiveBlending
@@ -172,10 +164,6 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     const plume = new Plume()
     let plumeAt = 0
 
-    // likely sources: dashed-looking rings on the floor
-    const sourceGroup = new THREE.Group()
-    scene.add(sourceGroup)
-    const sourceMat = new THREE.LineDashedMaterial({ dashSize: 0.18, gapSize: 0.14, transparent: true, opacity: 0.9 })
 
     // commander's annotations: always-on-top pins, constant screen size
     const markGroup = new THREE.Group()
@@ -247,7 +235,6 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       capMat.color.set(T.wallTop3d)
       for (const pr of people.values()) pr.color = '' // repaint next frame
       alertMat.color.set(T.alert)
-      sourceMat.color.set(T.alert)
       gasMat.blending = T.glow3d === 'additive' ? THREE.AdditiveBlending : THREE.NormalBlending
       gasMat.needsUpdate = true
       liveMat.needsUpdate = true
@@ -349,28 +336,6 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         floor.position.set(m.origin[0] + (m.w * m.res) / 2, 0, -(m.origin[1] + (m.h * m.res) / 2))
         floor.visible = true
       },
-      setGas(cloud) {
-        const g = new THREE.BufferGeometry()
-        g.setAttribute('position', new THREE.BufferAttribute(cloud.positions, 3))
-        g.setAttribute('aColor', new THREE.BufferAttribute(cloud.colors, 3))
-        g.setAttribute('aAlpha', new THREE.BufferAttribute(cloud.alphas, 1))
-        g.setAttribute('aPhase', new THREE.BufferAttribute(cloud.phases, 1))
-        gas.geometry.dispose()
-        gas.geometry = g
-      },
-      setSources(sources) {
-        for (const c of [...sourceGroup.children]) { sourceGroup.remove(c); (c as THREE.Line).geometry.dispose() }
-        for (const s of sources) {
-          if (s.q < SCALE.bands[0]) continue // a blip below the moderate band is not a source
-          const pts = Array.from({ length: 65 }, (_, i) => {
-            const a = (i / 64) * Math.PI * 2
-            return new THREE.Vector3(s.x + Math.cos(a) * 0.9, 0.04, -(s.y + Math.sin(a) * 0.9))
-          })
-          const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), sourceMat)
-          line.computeLineDistances()
-          sourceGroup.add(line)
-        }
-      },
       setMarks(marks) {
         for (const c of [...markGroup.children]) { markGroup.remove(c); ((c as THREE.Sprite).material as THREE.SpriteMaterial).dispose() }
         for (const m of marks) {
@@ -423,7 +388,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     let trailKey = ''
     let placed = false
     let wasFirst = false
-    const eye = new THREE.Object3D()
+    const eye = new THREE.PerspectiveCamera() // a camera, so lookAt() faces the target along -Z like the real one (an Object3D would face away)
     const t0 = performance.now()
     const tick = () => {
       raf = requestAnimationFrame(tick)
@@ -499,8 +464,6 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
           alertGroup.add(m)
         }
       }
-      gas.visible = P.layers.gas
-      sourceGroup.visible = P.layers.source
       markGroup.visible = P.layers.marks
       {
         const sm = (0.16 * 2) / size.h * 80 // ~80 px tall whatever the viewport
@@ -601,10 +564,6 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         m.uniforms.uAlpha.value = al
       }
 
-      gasMat.uniforms.uTime.value = (performance.now() - t0) / 1000
-      gasMat.uniforms.uScale.value = (GAS_SIZE * size.h * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360))
-      gasMat.uniforms.uMaxSize.value = 220 * renderer.getPixelRatio()
-      gasMat.uniforms.uAlpha.value += ((fp ? 0.12 : 0.22) - gasMat.uniforms.uAlpha.value) * 0.1 // low per-billboard alpha: density comes from overlap
       // orientation: the rose turns with the camera; in first person a heading strip shows degrees and the nearest points
       {
         const dir = new THREE.Vector3(); camera.getWorldDirection(dir)
@@ -647,7 +606,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     }
   }, [])
 
-  const { image, meta, theme, heat, recenter, model, layers, marks } = props
+  const { image, meta, theme, heat, recenter, layers, marks } = props
   const field = props.gas?.field ?? null
 
   // walls: from the occupancy image whenever the map changes
@@ -667,7 +626,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     api.current.setWalls(wallRects((i) => data[i * 4 + 3], meta.w, meta.h), meta)
   }, [image, meta])
 
-  // floor + gas: the field on scanned floor; predicted gas anywhere walls don't block
+  // floor + gas: the measured field on scanned floor
   useEffect(() => {
     const data = pixels.current
     if (!meta || !data || !api.current) return
@@ -682,22 +641,17 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     }
     g.putImageData(img, 0, 0)
     const top = meta.origin[1] + meta.h * meta.res
-    const bounds = { x0: meta.origin[0], y0: meta.origin[1], x1: meta.origin[0] + meta.w * meta.res, y1: top }
-    const pred = layers.gas ? predict(heat, bounds, model) : null
-    if (pred) {
-      const band = bandImage(pred.grid, { prior: pred.prior, priorWeight: PRIOR_WEIGHT, predictedAlpha: 0.4 })
+    if (layers.gas && field) {
+      // the measured GP field on the floor, fading with confidence (same picture as the 2D map)
+      const fg0 = layerGrid(field, field.mean, field.conf, 0.1)
+      const alphaBy = new Float32Array(fg0.conf.length)
+      for (let i = 0; i < alphaBy.length; i++) alphaBy[i] = fg0.conf[i] > 0 ? 0.2 + 0.8 * fg0.conf[i] : 0
+      const band = bandImage(fg0, { prior: fg0.prior, priorWeight: 1, alphaBy, skipThin: false })
       g.globalCompositeOperation = 'source-atop' // only on scanned floor
       g.drawImage(band.canvas, (band.x0 - meta.origin[0]) / meta.res, (top - band.y1) / meta.res,
                   band.w / meta.res, band.h / meta.res)
-      strokeIsolines(g, isolines(pred.grid, { prior: pred.prior, priorWeight: PRIOR_WEIGHT }),
+      strokeIsolines(g, isolines(fg0, { prior: fg0.prior, priorWeight: 1 }),
                      (x) => (x - meta.origin[0]) / meta.res, (y) => (top - y) / meta.res, 1.4, theme.ink)
-      const notWall = (x: number, y: number) => {
-        const cc = Math.floor((x - meta.origin[0]) / meta.res), rr = Math.floor((top - y) / meta.res)
-        if (cc < 0 || rr < 0 || cc >= meta.w || rr >= meta.h) return false
-        const a = data[(rr * meta.w + cc) * 4 + 3]
-        return a === 0 || a > 240 // unknown space can hold predicted gas too
-      }
-      api.current.setGas(gasCloud(pred, notWall))
     }
     const fog = layers.uncertainty && field ? uncertaintyImage(field) : null
     if (fog) {
@@ -705,9 +659,8 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       g.imageSmoothingEnabled = true
       g.drawImage(fog.canvas, (fog.x0 - meta.origin[0]) / meta.res, (top - fog.y1) / meta.res, fog.w / meta.res, fog.h / meta.res)
     }
-    api.current.setSources(model?.sources ?? [])
     api.current.setFloor(c, meta)
-  }, [meta, theme, heat, model, layers.gas, layers.uncertainty, field])
+  }, [meta, theme, heat, layers.gas, layers.uncertainty, field])
 
   useEffect(() => { api.current?.setMarks(marks) }, [marks])
   useEffect(() => { api.current?.setTheme() }, [theme])

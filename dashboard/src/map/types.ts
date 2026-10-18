@@ -36,8 +36,8 @@ export type MapProps = {
 
 /** What MapStage adds for the 2D/3D renderers. */
 export type RendererProps = MapProps & {
-  model: SourceModel | null // predicted VOC beyond what's sensed
-  horizon: number | null // seconds ahead to show the forecast for, null = now
+  model: SourceModel | null // source model (kept for the model pipeline; not rendered)
+  horizon: number | null // always null now: forecast views are not rendered
   recenter: number // bump to animate back to the default view
   onMoved: (moved: boolean) => void
 }

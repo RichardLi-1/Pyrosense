@@ -105,7 +105,7 @@ export default function Focus({ s, setUntil, view, setView, select, setSource, g
         <div className={flash ? 'reading-flash' : undefined}><Reading voc={s.voc} /></div>
         <Sparkline points={s.window} width={340} height={28} />
         <Attitude pose={s.pose} />
-        <SensorTiles s={s} gas={gas} />
+        <SensorTiles s={s} />
         <Crew s={s} select={select} colors={THEMES.focus.crew} only={view.only} setOnly={setOnly} />
       </section>
       <AnnotateBar marks={marks} armed={armed} setArmed={setArmed} remove={remove} here={here} dropHere={dropHere} now={now} />

@@ -45,7 +45,7 @@ class Settings:
     warn_hold_seconds: float = field(default_factory=lambda: float(_env("WARN_HOLD_SECONDS", "3")))
     warn_cooldown_seconds: float = field(default_factory=lambda: float(_env("WARN_COOLDOWN_SECONDS", "90")))
     elevenlabs_api_key: str | None = field(default_factory=lambda: os.environ.get("ELEVENLABS_API_KEY") or None)
-    elevenlabs_voice_id: str = field(default_factory=lambda: _env("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"))
+    elevenlabs_voice_id: str = field(default_factory=lambda: _env("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL"))
     elevenlabs_model: str = field(default_factory=lambda: _env("ELEVENLABS_MODEL", "eleven_flash_v2_5"))
     alert_cooldown_seconds: float = field(default_factory=lambda: float(_env("ALERT_COOLDOWN_SECONDS", "60")))
     db_flush_seconds: float = field(default_factory=lambda: float(_env("DB_FLUSH_SECONDS", "1.0")))

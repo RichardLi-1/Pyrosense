@@ -9,7 +9,7 @@ export type DisplayGrid = Grid & { prior: (i: number) => number; alphaBy: Float3
 
 const RES = 0.2 // m; diffusion is stable per 100 ms tick at D = 0.08 here
 const D = 0.08 // m²/s
-const DECAY_S = 180 // toward background, matching the backend heat-map half-life
+const DECAY_S = 90 // toward background
 const BLEND = 0.18 // per tick toward a fresh update
 const TICK_MS = 100
 
