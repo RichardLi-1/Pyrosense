@@ -21,7 +21,8 @@ Project name: **PyroSense**.
 
 - **Pi 5** (Ubuntu 24.04, ROS 2 Jazzy) — the only ROS machine. Headless; everyone works on it via **SSH / VS Code Remote-SSH**. Long-running stack lives in a shared **tmux** session named `ros`.
 - **Macs** — no ROS installed. Foxglove Studio for debugging (connects to the Pi's bridge over WebSocket). RViz only if someone spins up a UTM Ubuntu VM; not required.
-- **Vultr VM** — hosts Tiger Data (TimescaleDB), FastAPI backend, nginx + dashboard static build. Pi ↔ VM connectivity via **Tailscale**.
+- **Vultr VM** (`216.128.184.212`) — Docker Compose: FastAPI backend + nginx serving the dashboard and landing page. Deploy with `./deploy/deploy.sh`. Pi ↔ VM connectivity via **Tailscale**.
+- **Tiger Cloud** (Tiger Data) — the database: managed Postgres + TimescaleDB, reached from the VM over TLS via `DATABASE_URL`.
 
 ## Hardware
 
@@ -45,17 +46,18 @@ Pi: rplidar_ros → /scan → rf2o_laser_odometry (tf odom→base_link)
     foxglove_bridge (ws :8765)  ← single exit from the Pi
     ros2 bag record             ← always on, demo fallback
 
-Vultr: FastAPI (roslibpy ingest → cache + Tiger Data; REST + /ws/live; alert engine; Gemini)
-       Tiger Data (hypertable readings, continuous aggregate voc_cells, alerts table)
-       nginx → React + Canvas dashboard
+Vultr VM: FastAPI (Foxglove WS ingest → cache + write buffer; REST + /ws/live;
+                   alert + spoken-warning engines; Gemini, ElevenLabs)
+          nginx → dashboard static build (+ /landing/), /api and /ws proxied to FastAPI
+Tiger Cloud: readings hypertable, voc_cells continuous aggregate (the heat map),
+             alerts, sessions_meta (saved scans)
 ```
 
 Docs:
-- `backend-architecture.md` — full backend diagram, endpoints, schema, deployment
-- `design/pi-ros-stack.md` — nodes, frames, launch file, config, debugging
-- `design/voc-mapping.md` — the heat-map algorithm and its justification
-- `design/dashboard.md` — UI layout, layers, palette, interactions
-- `design/demo-and-pitch.md` — 4-minute pitch, demo script, fallbacks, Devpost write-up
+- `backend-architecture (2).md` — full backend diagram, endpoints, schema, Vultr + Tiger Cloud deployment
+- `pi-ros-stack.md` — nodes, frames, launch file, config, debugging
+- `voc-mapping.md` — the heat-map algorithm and its justification
+- `dashboard.md` — UI layout, layers, palette, interactions
 
 ## Key technical decisions (don't relitigate)
 
@@ -73,9 +75,9 @@ Docs:
 | Track | Our angle | Needs code? |
 |---|---|---|
 | **Top 3** | Default | — |
-| **Best Use of Tiger Data** (MLH) | Hypertable ingest + continuous aggregate *is* the heat map; replay via time-range queries; compression policy | Yes — done in backend |
+| **Best Use of Tiger Data** (MLH) | Tiger Cloud: hypertable ingest + continuous aggregate *is* the heat map; replay and the scan catalog via time-range queries; compression policy | Done |
 | **Best Use of Gemini API** (MLH) | Walk summary: top cells + heat PNG → plain-English report in the dashboard | Yes — `/summary` |
-| **Best Use of Vultr** (MLH) | Entire backend + dashboard hosted on a Vultr VM | Yes — deploy |
+| **Best Use of Vultr** (MLH) | Backend, dashboard and landing page hosted on a Vultr VM (Docker Compose, one-command deploy) | Done |
 | **Best Domain Name** (GoDaddy, MLH) | Register project domain, TLS via certbot | Trivial |
 | **Best Healthcare & Well-being Hack** | Indoor air quality → respiratory health, headaches, cognition | Framing |
 | **Best Climate Action / Sustainability** | Shows where ventilation/HVAC isn't reaching; targeted fixes vs blanket ventilation | Framing |
@@ -99,7 +101,7 @@ Technicality & quality (working demo) · Design (UI polish) · Impact · Present
 
 ## Conventions
 
-- Python 3.12, `rclpy` on the Pi; FastAPI + `asyncpg` + `roslibpy` on the backend; React + Canvas (Vite) frontend.
+- Python 3.12, `rclpy` on the Pi; FastAPI + `asyncpg` + a Foxglove WebSocket client on the backend; React + Canvas (Vite) frontend.
 - ROS package names: `voc_sensor` (driver + mapper + `VocReading.msg`), `wearable_bringup` (launch + config).
 - Topic names are fixed: `/scan`, `/map`, `/pose`, `/voc`, `/voc_points`. Frame names: `map`, `odom`, `base_link`, `laser`, `voc_link`.
 - Every reading carries a `session` id (set at launch, e.g. `utsc-sw-2025-10-17-14h`).
@@ -109,7 +111,7 @@ Technicality & quality (working demo) · Design (UI polish) · Impact · Present
 ## Demo essentials
 
 - Live trigger: uncap a **dry-erase marker** or spray **hand sanitizer** near the sensor → VOC spikes in seconds → heat blooms, alert fires.
-- Fallback: `ros2 bag play` on the Pi, or scrubber over a pre-loaded session in Tiger Data.
+- Fallback: `ros2 bag play` on the Pi, or open a saved scan from the catalog (Tiger Cloud) and scrub it.
 - Have the device visible and wearable on the table.
 
 ## Glossary (for anyone new)

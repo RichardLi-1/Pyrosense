@@ -20,62 +20,46 @@ The Pi is the only machine running ROS 2. Everything downstream is WebSocket / H
 │  ros2 bag record /scan /tf /tf_static /voc        (always on: demo replay fallback)          │
 │                                                                                              │
 │                         ┌──────────────────────────────────┐                                 │
-│   all topics ──DDS──▶   │  foxglove_bridge   ws://pi:8765  │  ◀── only exit from the Pi      │
+│   all topics ──DDS──▶   │  foxglove_bridge   ws://pi:8765  │  ◀── only data exit from the Pi │
 │                         └────────────────┬─────────────────┘                                 │
 └──────────────────────────────────────────┼───────────────────────────────────────────────────┘
                                            │ Wi‑Fi · WebSocket
                    ┌───────────────────────┼─────────────────────────┐
                    │                       │                         │
                    ▼                       ▼                         ▼
-          Foxglove Studio          FastAPI ingest              (dashboard never
-          (Mac, debug only)        (see below)                  talks to the bridge)
+          Foxglove Studio          FastAPI ingest on Vultr     (dashboard never
+          (Mac, debug only)        (over Tailscale)             talks to the bridge)
 
 
-┌──────────────────────────────── Vultr VM · Ubuntu · Docker Compose ──────────────────────────┐
+┌───────────────────────── Vultr VM · 216.128.184.212 · Ubuntu · Docker Compose ───────────────┐
 │                                                                                              │
-│  ┌─────────────────────────── FastAPI (uvicorn) ───────────────────────────┐                 │
+│  ┌─────────────────────────── api: FastAPI (uvicorn :8000) ────────────────┐                 │
 │  │                                                                         │                 │
-│  │  ingest worker (asyncio task)                                           │                 │
-│  │    roslibpy ──▶ subscribe /pose @10Hz, /voc_points, /map                │                 │
-│  │    ├──▶ live state cache  {pose, voc, voc_window[60s], map_png, meta}   │                 │
-│  │    ├──▶ batch buffer ──every 1 s──▶ INSERT INTO readings  ──────────────┼──┐              │
-│  │    └──▶ alert engine  (threshold + hold time + cooldown)                │  │              │
+│  │  ingest (asyncio task, Foxglove WS client, CDR decode)                  │                 │
+│  │    subscribes /pose, /voc_points, /map, /voc                            │                 │
+│  │    ├──▶ live state cache  {pose, voc, 60 s window, map PNG + meta}      │                 │
+│  │    ├──▶ write buffer ──COPY every 1 s──▶ readings ──────────────────────┼──┐              │
+│  │    ├──▶ alert engine     (> VOC_THRESHOLD for HOLD s, cooldown)         │  │              │
+│  │    └──▶ warning engine   (> WARN_THRESHOLD: Gemini line + ElevenLabs)   │  │              │
 │  │                                                                         │  │              │
-│  │  API                                                                    │  │              │
-│  │    WS   /ws/live       pose + voc @10Hz, map on change   ◀── cache      │  │              │
-│  │    GET  /heatmap       decayed cell means + weights      ◀── voc_cells ─┼──┼──┐           │
-│  │    GET  /trail         path with voc values              ◀── readings  ─┼──┼──┤           │
-│  │    GET  /map           occupancy grid PNG + origin/res   ◀── cache      │  │  │           │
-│  │    GET  /alerts        alert history                     ◀── alerts    ─┼──┼──┤           │
-│  │    GET  /summary       Gemini walk report                ◀── voc_cells ─┼──┼──┤           │
-│  │    GET  /sessions      list recorded sessions            ◀── readings  ─┼──┼──┤           │
-│  │                                                                         │  │  │           │
-│  │  gemini client  (google-genai)  ── top cells + heat PNG ──▶ report      │  │  │           │
+│  │  WS  /ws/live     hello · pose @10 Hz · voc · sensor · map · alert …    │  │              │
+│  │  GET /heatmap /trail /alerts /sessions /summary /map …   ◀── SQL ───────┼──┼──┐           │
+│  │  POST /session/restart ──HTTP──▶ Pi control :8766 (restarts SLAM)       │  │  │           │
 │  └─────────────────────────────────────────────────────────────────────────┘  │  │           │
-│                                                                                ▼  ▼           │
-│  ┌──────────────────────── Tiger Data (TimescaleDB) ─────────────────────────────────────┐    │
-│  │  hypertable      readings(ts, session, x, y, heading, voc)                            │    │
-│  │  cont. aggregate voc_cells  = time_bucket(10 s) × floor(x/0.2) × floor(y/0.2)         │    │
-│  │                                → avg(voc), stddev(voc), count(*)                      │    │
-│  │  table           alerts(ts, session, x, y, voc, map_png)                              │    │
-│  │  policies        refresh voc_cells every 10 s · compress readings after 1 h           │    │
-│  └───────────────────────────────────────────────────────────────────────────────────────┘    │
-│                                                                                              │
-│  ┌── nginx ──┐   serves dashboard static build · reverse-proxies /api and /ws to FastAPI     │
-│  └───────────┘   TLS via certbot on the GoDaddy domain                                       │
-└──────────────────────────────────────────────────────────────────────────────────────────────┘
-                                           │ HTTPS / WSS
-                                           ▼
-                            ┌──────────────────────────────┐
-                            │  Dashboard (browser)         │
-                            │  React + Canvas              │
-                            │  L1 occupancy grid  /map     │
-                            │  L2 heat layer      /heatmap │
-                            │  L3 trail           /trail   │
-                            │  L4 person dot      /ws/live │
-                            │  gauge · sparkline · alerts  │
-                            │  Gemini panel · scrubber     │
-                            └──────────────────────────────┘
+│                                                                               │  │           │
+│  ┌── nginx :80 ──┐  serves dashboard/dist (+ /landing/), /api/* → api:8000    │  │           │
+│  └───────────────┘  /ws/* → api:8000/ws/* · plain HTTP, no TLS yet            │  │           │
+│                                                                               │  │           │
+│  timescaledb container: local fallback, unused with Tiger Cloud               │  │           │
+└──────────────────────────────────────────┬────────────────────────────────────┼──┼───────────┘
+                                           │ HTTP / WS                          │  │ TLS, Postgres
+                                           ▼                                    ▼  ▼
+                            ┌──────────────────────────────┐   ┌──────────────── Tiger Cloud (Tiger Data) ───────────┐
+                            │  Dashboard (browser)         │   │  hypertable      readings (1-day chunks)            │
+                            │  React · Canvas · three.js   │   │  cont. aggregate voc_cells (10 s × 20 cm cells)     │
+                            │  gas model in a Web Worker   │   │  tables          alerts, sessions_meta (scans)      │
+                            │  2D / 3D / first person      │   │  policies        refresh 10 s · compress after 1 h  │
+                            └──────────────────────────────┘   └─────────────────────────────────────────────────────┘
 ```
 
 ## Mermaid version
@@ -87,38 +71,43 @@ flowchart LR
     DRV -->|/scan| RF2O[rf2o_laser_odometry]
     DRV -->|/scan| SLAM[slam_toolbox]
     RF2O -->|tf odom→base_link| SLAM
-    VOC[VOC sensor] --> VDRV[voc_driver]
+    VOC[SGP30] --> VDRV[voc_driver]
     VDRV -->|/voc| VMAP[voc_mapper]
     SLAM -->|tf map→odom| VMAP
     SLAM -->|/map /pose| BR[foxglove_bridge :8765]
     VMAP -->|/voc_points| BR
+    CTL[control :8766]
     BAG[(ros2 bag)]
   end
 
   subgraph VULTR["Vultr VM · Docker Compose"]
-    subgraph API["FastAPI"]
-      ING[ingest worker<br/>roslibpy]
+    subgraph API["api: FastAPI"]
+      ING[ingest<br/>Foxglove WS client]
       CACHE[(live state cache)]
       ALERT[alert engine]
-      GEM[gemini client]
-      REST[REST + WS endpoints]
+      WARN[warning engine]
+      REST[REST + /ws/live]
     end
-    TD[(Tiger Data<br/>readings hypertable<br/>voc_cells cont. agg<br/>alerts)]
-    NG[nginx]
+    NG[nginx :80<br/>dashboard + landing]
   end
 
-  BR -->|WS| ING
+  TD[(Tiger Cloud<br/>readings hypertable<br/>voc_cells cont. agg<br/>alerts · sessions_meta)]
+
+  BR -->|WS over Tailscale| ING
   BR -.->|WS debug| FOX[Foxglove Studio]
   ING --> CACHE
-  ING -->|batch INSERT| TD
+  ING -->|COPY every 1 s| TD
   ING --> ALERT
+  ING --> WARN
   ALERT --> TD
-  TD -->|SELECT voc_cells| REST
+  TD -->|SELECT| REST
   CACHE --> REST
-  GEM --> REST
+  REST -->|POST /restart| CTL
+  WARN -->|HTTPS| GAPI[Gemini API]
+  WARN -->|HTTPS| EL[ElevenLabs]
+  REST -->|/summary| GAPI
   REST --> NG
-  NG -->|HTTPS / WSS| DASH[Dashboard<br/>React + Canvas]
-  GEM -->|HTTPS| GAPI[Gemini API]
+  NG -->|HTTP / WS| DASH[Dashboard<br/>React + Canvas + three.js]
 ```
 
 ## Components
@@ -130,77 +119,82 @@ flowchart LR
 | `rplidar_ros` | apt | USB serial | `/scan` |
 | `rf2o_laser_odometry` | source | `/scan` | tf `odom→base_link` |
 | `slam_toolbox` | apt | `/scan`, tf | `/map`, `/pose`, tf `map→odom` |
-| `voc_driver` | **ours** | I²C | `/voc` (`VocReading`: stamp, voc_index, temp, humidity, warmed_up) |
-| `voc_mapper` | **ours** | `/voc`, tf | `/voc_points` (`PointCloud2`: x, y, z, voc) |
+| `voc_driver` | **ours** | I²C | `/voc` (`VocReading`: voc, unit, eco2, raw_h2, raw_ethanol, temp, humidity, warmed_up) |
+| `voc_mapper` | **ours** | `/voc`, tf | `/voc_points` (`PointCloud2`: x, y, z, voc, t), new points only |
 | `static_transform_publisher` | apt | – | `/tf_static` |
 | `foxglove_bridge` | apt | all topics | WebSocket `:8765` |
 | `ros2 bag record` | apt | topics | `.mcap` file for replay |
 
 Launched together by one `mapping.launch.py` inside a tmux session that starts on boot.
 
-### FastAPI
+### FastAPI (`api` container on the Vultr VM)
 
 | Piece | Responsibility |
 |---|---|
-| **ingest worker** | Background `asyncio` task. `roslibpy` subscribes to `/pose`, `/voc_points`, `/map`. Each `/voc_points` sample has the sensor lag already applied by `voc_mapper`. Buffers rows and does one batch `INSERT` per second with `asyncpg.copy_records_to_table`. |
-| **live state cache** | Plain dict guarded by a lock: latest pose, latest voc, 60 s voc deque, latest `/map` rendered to PNG + its origin/resolution. `/ws/live` reads only from here — no DB on the hot path. |
-| **alert engine** | Runs on every cache update. Fires when `voc > THRESHOLD` for `HOLD_SECONDS`, respects `COOLDOWN_SECONDS`. Writes a row to `alerts` (with map PNG + pose) and pushes an `alert` event on `/ws/live`. Twilio/contact notification is a later add; the event is the hook. |
-| **gemini client** | On demand (`/summary`), queries top 10 cells from `voc_cells` for the session, renders the heat map to PNG, sends both to Gemini with a fixed prompt, caches the result for 60 s. |
-| **REST / WS** | See table below. |
+| **ingest** | Background `asyncio` task speaking the Foxglove WebSocket protocol (`app/foxglove.py`), decoding CDR with `mcap_ros2`. Subscribes to `/pose`, `/voc_points`, `/map`, `/voc`. The Pi sends only new `/voc_points`, each with its own timestamp; on startup ingest skips the Pi's backlog if the session already has rows. Tolerates 90 s stalls on the hotspot link before dropping the bridge. |
+| **live state cache** | Latest pose, latest voc, 60 s window, latest `/map` rendered to PNG + origin/resolution. `/ws/live` reads only from here, so the DB is never on the hot path. |
+| **write buffer** | Rows queue in memory (up to 50 000) and go to Tiger Cloud with `COPY` once per second. If the DB is unreachable they keep buffering and flush when it returns; DB-backed routes answer 503 meanwhile. |
+| **alert engine** | Fires when `voc > VOC_THRESHOLD` for `VOC_HOLD_SECONDS`, respects `ALERT_COOLDOWN_SECONDS`. Writes a row to `alerts` (with the map PNG) and pushes an `alert` event. |
+| **warning engine** | Above `WARN_THRESHOLD` (100 ppb) for a few seconds: Gemini writes one spoken line, ElevenLabs voices it (`/warnings/{id}/audio.mp3`), template text and the browser's voice are the fallbacks. |
+| **summary** | `/summary`: top cells from `voc_cells` + heat PNG → Gemini → plain-English report, cached 60 s. |
+| **sessions** | The current scan id survives API restarts. `POST /session/save` names a scan and stores its final map in `sessions_meta`; `POST /session/restart` saves it, asks the Pi's control server (`:8766`) to restart SLAM and the point buffer, and opens a new session. |
 
 ### Endpoints
 
+Served at `/api/*` through nginx (prefix stripped), WebSocket at `/ws/live`.
+
 | Method | Path | Source | Returns |
 |---|---|---|---|
-| WS | `/ws/live?session=` | cache | `{t:"pose", x,y,heading,voc}` @10 Hz · `{t:"map", url, origin, res, w, h}` on change · `{t:"alert", …}` |
-| GET | `/heatmap?session=&until=&half_life=120` | `voc_cells` | `[{cx, cy, mean, weight}]` — decayed by bucket age |
-| GET | `/trail?session=&since=` | `readings` | `[{ts, x, y, voc}]` |
-| GET | `/map?session=` | cache | PNG (occupancy) + `X-Map-Origin`, `X-Map-Res` headers |
-| GET | `/alerts?session=` | `alerts` | `[{ts, x, y, voc, map_png_url}]` |
-| GET | `/summary?session=` | `voc_cells` + Gemini | `{text, generated_at, top_cells}` |
-| GET | `/sessions` | `readings` | `[{session, started, ended, n}]` |
+| WS | `/ws/live` | cache | `hello` on connect · `pose` @10 Hz · `voc` · `sensor` · `map` on change · `alert` · `warning` · `bridge` |
+| GET | `/heatmap?session=&until=&half_life=` | `voc_cells` | `{cells: [{cx, cy, mean, weight, sd, n}]}`, decayed by bucket age (default half-life 180 s) |
+| GET | `/trail?session=&since=&until=` | `readings` | `[{ts, x, y, heading, voc}]` |
+| GET | `/map`, `/map/meta` | cache | occupancy PNG / its origin, resolution, size |
+| GET | `/alerts`, `/alerts/{id}/map.png` | `alerts` | alert history / the map at alert time |
+| GET | `/summary?force=` | `voc_cells` + Gemini | `{text, source: "gemini" \| "fallback"}` |
+| GET | `/sessions`, `/sessions/{s}/map.png` | `readings` + `sessions_meta` | scan catalog / a saved scan's map |
+| GET/POST | `/session`, `/session/save`, `/session/restart` | — | current scan · save it · start a new one |
+| GET/POST | `/warnings`, `/warnings/{id}/audio.mp3`, `/warnings/test` | warning engine | spoken warnings |
+| GET | `/health` | — | bridge, DB, session status |
 
-### Tiger Data
+### Tiger Data (Tiger Cloud)
+
+The database is a **Tiger Cloud** service (managed Postgres + TimescaleDB), not the VM: the API reaches it over TLS via `DATABASE_URL`. [`db/schema.sql`](../db/schema.sql) is the source of truth; the parts that matter:
 
 ```sql
-CREATE TABLE readings (
-  ts       TIMESTAMPTZ NOT NULL,
-  session  TEXT        NOT NULL,
-  x        REAL        NOT NULL,
-  y        REAL        NOT NULL,
-  heading  REAL,
-  voc      REAL        NOT NULL
-);
-SELECT create_hypertable('readings', 'ts');
-CREATE INDEX ON readings (session, ts DESC);
+-- every VOC sample, already placed on the map by voc_mapper
+CREATE TABLE readings (ts TIMESTAMPTZ NOT NULL, session TEXT NOT NULL,
+                       x REAL NOT NULL, y REAL NOT NULL, heading REAL, voc REAL NOT NULL);
+SELECT create_hypertable('readings', by_range('ts', INTERVAL '1 day'));
 
+-- the heat map: 10 s buckets × 20 cm cells; materialized_only = false so the
+-- newest rows (not yet refreshed) are included
 CREATE MATERIALIZED VIEW voc_cells
-WITH (timescaledb.continuous) AS
-SELECT time_bucket('10 seconds', ts) AS bucket,
-       session,
-       floor(x / 0.2)::int AS cx,
-       floor(y / 0.2)::int AS cy,
-       avg(voc)    AS mean,
-       stddev(voc) AS sd,
-       count(*)    AS n
-FROM readings
-GROUP BY bucket, session, cx, cy;
+WITH (timescaledb.continuous, timescaledb.materialized_only = false) AS
+SELECT time_bucket('10 seconds', ts) AS bucket, session,
+       floor(x / 0.2)::int AS cx, floor(y / 0.2)::int AS cy,
+       avg(voc) AS mean, stddev(voc) AS sd, count(*) AS n
+FROM readings GROUP BY bucket, session, cx, cy;
 
-SELECT add_continuous_aggregate_policy('voc_cells',
-  start_offset => NULL,                 -- no lower bound: late rows still materialize
-  end_offset   => INTERVAL '10 seconds',
-  schedule_interval => INTERVAL '10 seconds');
+-- refresh every 10 s with no lower bound, so late rows (DB outage backlog, replays) still land
+SELECT add_continuous_aggregate_policy('voc_cells', start_offset => NULL,
+  end_offset => INTERVAL '10 seconds', schedule_interval => INTERVAL '10 seconds');
 
-ALTER TABLE readings SET (timescaledb.compress, timescaledb.compress_segmentby = 'session');
+-- compress finished walks
+ALTER TABLE readings SET (timescaledb.compress, timescaledb.compress_segmentby = 'session',
+                          timescaledb.compress_orderby = 'ts DESC');
 SELECT add_compression_policy('readings', INTERVAL '1 hour');
 
-CREATE TABLE alerts (
-  id       SERIAL PRIMARY KEY,
-  ts       TIMESTAMPTZ NOT NULL,
-  session  TEXT NOT NULL,
-  x REAL, y REAL, voc REAL,
-  map_png  BYTEA
-);
+-- alerts keep the map at alert time; sessions_meta is the saved-scan catalog
+CREATE TABLE alerts (id SERIAL PRIMARY KEY, ts TIMESTAMPTZ NOT NULL, session TEXT NOT NULL,
+                     x REAL, y REAL, voc REAL, map_png BYTEA, map_origin_x REAL, map_origin_y REAL, map_res REAL);
+CREATE TABLE sessions_meta (session TEXT PRIMARY KEY, name TEXT, notes TEXT, saved_at TIMESTAMPTZ,
+                            map_png BYTEA, map_origin_x REAL, map_origin_y REAL, map_res REAL, map_w INT, map_h INT);
+```
+
+Apply it once to the Tiger Cloud service:
+
+```bash
+docker run --rm -i timescale/timescaledb:latest-pg16 psql "$DATABASE_URL" < db/schema.sql
 ```
 
 Heat map query (decay weight by bucket age):
@@ -219,44 +213,57 @@ GROUP BY cx, cy;
 
 ### Deployment (Vultr)
 
+One Vultr VM (`216.128.184.212`) runs `docker-compose.yml` from the repo root, checked out at `~/super-fire-project`:
+
 ```
 docker-compose.yml
-├── timescaledb   timescale/timescaledb:latest-pg16   volume: tsdata
-├── api           ./backend  (uvicorn, port 8000)     env: DATABASE_URL, BRIDGE_URL=ws://<pi-ip>:8765, GEMINI_API_KEY
-└── nginx         ./deploy/nginx.conf                 ports 80/443, serves ./dashboard/dist, proxies /api → api:8000, /ws → api:8000
+├── api           ./backend (uvicorn :8000)     env_file: backend/.env  (DATABASE_URL → Tiger Cloud, BRIDGE_URL → Pi)
+├── nginx         ./deploy/nginx.conf           :80 (443 mapped, not configured) · serves ./dashboard/dist · /api → api:8000, /ws → api:8000
+└── timescaledb   local fallback                only used if DATABASE_URL points at it instead of Tiger Cloud
 ```
 
-The Pi must be reachable from the VM. Options, in order of simplicity:
+Deploy from a Mac with `deploy/deploy.sh`:
 
-1. **Tailscale** on Pi + VM — bridge URL becomes `ws://pi-tailscale-ip:8765`. Works from any Wi‑Fi. Recommended.
-2. Run the FastAPI container on the Mac on the venue LAN instead, point the dashboard at the Mac. Vultr then only hosts Tiger Data + the static dashboard.
-3. Reverse SSH tunnel from Pi to VM (`ssh -R 8765:localhost:8765 vm`).
+```bash
+./deploy/deploy.sh             # push the current branch, VM checks it out + rebuilds api, build + rsync dashboard
+./deploy/deploy.sh api         # backend only
+./deploy/deploy.sh dashboard   # dashboard only (~20 s): npm run build locally, rsync dist/ to the VM
+```
+
+The script ends by printing `/api/health` from the VM. The dashboard is built on the Mac, not the VM, and nginx serves it as static files. To develop the dashboard against the deployed backend: `BACKEND=http://216.128.184.212 npm run dev`.
+
+**Pi ↔ VM.** The VM connects out to the Pi, so the Pi must be reachable: Tailscale on both, `BRIDGE_URL=ws://<pi-tailscale-ip>:8765`. The Pi's control server (`:8766`, derived from `BRIDGE_URL` unless `PI_CONTROL_URL` is set) handles scan restarts. The Pi rides a phone hotspot, so short drops are expected.
+
+**TLS.** Not set up: the dashboard is plain HTTP on the VM's IP. `deploy/nginx.conf` already serves `/.well-known/acme-challenge/`; add a domain, run `certbot certonly --webroot`, and add an `ssl` server block.
 
 ### Replay mode
 
-`ros2 bag play` on the Pi re-publishes recorded topics; the bridge and everything downstream can't tell the difference. For a Pi-free demo, run the ingest worker against a bag played from the Mac via a local `foxglove_bridge` inside the Ubuntu VM, or pre-load a session into Tiger Data and drive the dashboard from `/heatmap?until=` with the scrubber.
+`ros2 bag play` on the Pi re-publishes recorded topics; the bridge and everything downstream can't tell the difference. For a Pi-free demo, run the ingest worker against a bag played from the Mac via a local `foxglove_bridge` inside the Ubuntu VM, or pick a saved scan from the catalog (served from Tiger Cloud) and drive the dashboard from `/heatmap?until=` with the scrubber.
 
 ### Environment
 
-| Var | Where | Example |
+All API settings live in `backend/.env` on the VM (template: `backend/.env.example`, never committed).
+
+| Var | Where | Example / default |
 |---|---|---|
-| `BRIDGE_URL` | api | `ws://100.64.0.12:8765` |
-| `DATABASE_URL` | api | `postgresql://postgres:…@timescaledb:5432/app` |
-| `GEMINI_API_KEY` | api | – |
-| `VOC_THRESHOLD` | api | `250` |
-| `VOC_HOLD_SECONDS` | api | `5` |
-| `ALERT_COOLDOWN_SECONDS` | api | `60` |
+| `DATABASE_URL` | api | `postgres://tsdbadmin:…@<service>.tsdb.cloud.timescale.com:<port>/tsdb?sslmode=require` |
+| `BRIDGE_URL` | api | `ws://<pi-tailscale-ip>:8765` |
+| `PI_CONTROL_URL` | api | optional; default `http://<bridge host>:8766` |
+| `GEMINI_API_KEY`, `GEMINI_MODEL` | api | –, `gemini-2.5-flash` |
+| `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID` | api | optional; browser voice otherwise |
+| `VOC_UNIT` | api | `ppb` (SGP30) |
+| `VOC_THRESHOLD`, `VOC_HOLD_SECONDS`, `ALERT_COOLDOWN_SECONDS` | api | `2200`, `5`, `60` |
+| `WARN_THRESHOLD` | api | `100` |
+| `HEATMAP_HALF_LIFE` | api | `180` s |
 | `SENSOR_LAG_SECONDS` | voc_mapper (Pi) | `12` |
 
 
 ## Implementation notes (backend as built, Oct 17)
 
 - Code lives in `backend/app/`; run/test instructions in `backend/README.md`.
-- **Ingest speaks the Foxglove WebSocket protocol directly** (`app/foxglove.py`), decoding CDR with
-  `mcap_ros2`. `roslibpy` was dropped because it implements the rosbridge protocol, which
-  `foxglove_bridge` does not serve. Same topics, same contract.
+- **Ingest speaks the Foxglove WebSocket protocol directly** (`app/foxglove.py`). `roslibpy` was dropped
+  because it implements the rosbridge protocol, which `foxglove_bridge` does not serve. Jazzy's bridge
+  negotiates `foxglove.sdk.v1`; ingest accepts that and `foxglove.websocket.v1`.
 - `voc_cells` is created with `materialized_only = false` so `/heatmap` includes readings newer than
   the last 10 s refresh.
-- Extra `/ws/live` events beyond the table above: `voc` (each new sample), `bridge` (link state),
-  `hello` (on connect). Extra routes: `GET /map/meta`, `GET/POST /session`, `GET /health`.
 - `tools/fake_pi.py` is a Foxglove server that stands in for the Pi (walker + VOC source + spike).

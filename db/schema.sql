@@ -1,4 +1,4 @@
--- PROJECT_NAME · Tiger Data (TimescaleDB) schema
+-- PyroSense · Tiger Data (TimescaleDB) schema
 -- Apply with:  psql "$DATABASE_URL" -f db/schema.sql
 -- Idempotent. Coordinates are metres in the session's SLAM `map` frame.
 --

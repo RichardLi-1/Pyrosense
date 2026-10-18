@@ -1,4 +1,4 @@
-> **Superseded (Oct 17):** the backend was built to `backend-architecture (2).md` + `CLAUDE.md` (foxglove_bridge, `readings`/`voc_cells` schema, `/heatmap` endpoints). This file is kept for the design rules and rationale; where they disagree, the newer docs win.
+> **Superseded (Oct 17):** the backend was built to `backend-architecture (2).md` + `CLAUDE.md` (foxglove_bridge, `readings`/`voc_cells` schema, `/heatmap` endpoints, FastAPI on a Vultr VM rather than a laptop, Tiger Cloud as the database). This file is kept for the design rules and rationale; where they disagree, the newer docs win.
 
 # Software Architecture
 
