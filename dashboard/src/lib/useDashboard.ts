@@ -16,6 +16,7 @@ type State = {
   threshold: number
   unit: VocUnit
   sensor: Sensor | null // latest raw frame from the gas sensor
+  sensorWindow: SensorWindow // last 60 s of each secondary channel, [ms, value]
   crew: string[] // wearer ids, in order of appearance
   wearers: Record<string, Wearer>
   selected: string | null
@@ -48,9 +49,25 @@ function withWearer(p: State, id: string, f: (w: Wearer) => Wearer): State {
   return { ...p, crew, selected: p.selected ?? id, wearers: { ...p.wearers, [id]: f(p.wearers[id] ?? empty()) } }
 }
 
+export type SensorField = 'eco2' | 'raw_h2' | 'raw_ethanol'
+export type SensorWindow = Record<SensorField, [number, number][]>
+const SENSOR_FIELDS: SensorField[] = ['eco2', 'raw_h2', 'raw_ethanol']
+const emptySensorWindow = (): SensorWindow => ({ eco2: [], raw_h2: [], raw_ethanol: [] })
+/** Append one sensor frame to the per-channel 60 s buffers. */
+function pushSensor(w: SensorWindow, e: Sensor): SensorWindow {
+  const t = Date.parse(e.ts) || Date.now()
+  const out = { ...w }
+  for (const f of SENSOR_FIELDS) {
+    const v = e[f]
+    if (v == null) continue
+    out[f] = [...w[f].filter(([wt]) => wt > t - WINDOW_MS), [t, v]]
+  }
+  return out
+}
+
 export function useDashboard(source: DataSource) {
   const [s, set] = useState<State>({
-    kind: source.kind, connected: false, bridge: false, session: '', started: null, threshold: 2200, unit: 'ppb', sensor: null,
+    kind: source.kind, connected: false, bridge: false, session: '', started: null, threshold: 2200, unit: 'ppb', sensor: null, sensorWindow: emptySensorWindow(),
     crew: [], wearers: {}, selected: null, meta: null, image: null, alerts: [], heat: [], trail: [], history: [],
     until: null, summary: null, summaryLoading: false,
   })
@@ -95,7 +112,7 @@ export function useDashboard(source: DataSource) {
           break
         }
         case 'sensor':
-          set((p) => ({ ...p, sensor: e }))
+          set((p) => ({ ...p, sensor: e, sensorWindow: pushSensor(p.sensorWindow, e) }))
           break
         case 'alert':
           set((p) => ({ ...p, alerts: [e, ...p.alerts] }))

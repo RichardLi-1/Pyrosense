@@ -5,6 +5,7 @@
   --poor: #ff7a2e;
   --alert: #ef233c;
   --live: #1dd3b0;
+  --signal: #7dd3fc; /* live-changing numbers in the rail */
   font-family: 'Inter', system-ui, sans-serif;
   font-feature-settings: 'tnum' 1, 'cv11' 1;
   -webkit-font-smoothing: antialiased;
@@ -23,6 +24,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 
 .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; font-size: 13px; letter-spacing: -0.01em; }
 .brand svg { display: block; color: var(--text); }
+a.brand { color: inherit; text-decoration: none; cursor: pointer; pointer-events: auto; }
 .caption { display: block; font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .muted { color: var(--muted); }
 .link { color: var(--muted); font-size: 12px; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); }
@@ -38,7 +40,8 @@ button:disabled { opacity: 0.5; cursor: default; }
 .reading--empty .reading-value { color: var(--muted); }
 
 /* status */
-.status { font-size: 13px; color: var(--muted); white-space: nowrap; }
+/* same pill as .map-btn (Playback, Recenter) so the header controls read as one set */
+.status { display: inline-flex; align-items: center; height: 40px; padding: 0 18px 0 14px; border-radius: 999px; background: var(--pop); border: 1px solid var(--line); box-shadow: 0 4px 16px rgba(0,0,0,.18); font-size: 14px; color: var(--text); white-space: nowrap; }
 .status .dot { color: var(--muted); }
 .status--live .dot { color: var(--live); box-shadow: 0 0 0 3px color-mix(in srgb, var(--live) 22%, transparent); }
 .status--demo .dot { color: var(--moderate); }
@@ -155,15 +158,15 @@ button:disabled { opacity: 0.5; cursor: default; }
 
 /* ---- map controls + legend (all designs) ---------------------------------- */
 .map-3d { position: absolute; inset: 0; }
-.map-ctrl { position: absolute; z-index: 4; display: flex; gap: 8px; align-items: center; }
+.map-ctrl { position: absolute; z-index: 4; display: flex; gap: 10px; align-items: center; }
 .map-btn, .map-seg {
-  height: 30px; border-radius: 999px; background: var(--pop); border: 1px solid var(--line);
+  height: 40px; border-radius: 999px; background: var(--pop); border: 1px solid var(--line);
   box-shadow: 0 4px 16px rgba(0,0,0,.18);
 }
-.map-btn { display: inline-flex; align-items: center; gap: 6px; padding: 0 12px 0 10px; font-size: 12px; color: var(--text); animation: fade .2s ease-out; }
+.map-btn { display: inline-flex; align-items: center; gap: 8px; padding: 0 18px 0 14px; font-size: 14px; color: var(--text); animation: fade .2s ease-out; }
 .map-btn:hover { border-color: color-mix(in srgb, var(--text) 30%, transparent); }
-.map-seg { display: inline-flex; padding: 2px; }
-.map-seg button { font-size: 11px; font-weight: 600; letter-spacing: .02em; padding: 0 10px; border-radius: 999px; color: var(--muted); }
+.map-seg { display: inline-flex; padding: 3px; }
+.map-seg button { font-size: 14px; font-weight: 600; letter-spacing: .01em; padding: 0 16px; border-radius: 999px; color: var(--muted); }
 .map-seg button.on { background: var(--text); color: var(--bg); }
 .legend {
   position: absolute; z-index: 4; display: flex; flex-direction: column; gap: 5px; width: 332px; font-size: 11px; color: var(--muted);
@@ -194,16 +197,19 @@ button:disabled { opacity: 0.5; cursor: default; }
 .tile .caption { font-size: 10px; letter-spacing: .07em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile-value { font-size: 30px; font-weight: 300; letter-spacing: -0.03em; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .f-reading .tile-value { color: var(--text); }
+.f-reading .tile--warn .tile-value { color: var(--alert); }
+.f-reading .tile--next .tile-value { color: var(--text); }
+.tile .sparkline { display: block; margin-top: 2px; }
 .tile-unit { margin-left: 5px; font-size: 11px; letter-spacing: 0; color: var(--muted); font-family: 'Inter', system-ui, sans-serif; }
 .f-reading .tile-unit { font-size: 13px; margin-left: 8px; }
 .tile--warn .tile-value { color: var(--alert); }
 .tile--next .tile-value { color: var(--good); }
 .tiles-note { grid-column: 1 / -1; font-size: 11px; color: var(--muted); }
 .tiles-warm { color: var(--moderate); }
-.playback { height: 28px; box-shadow: none; animation: none; }
+.playback { box-shadow: none; animation: none; }
 .playback.on { background: var(--text); color: var(--bg); border-color: transparent; }
 .f-top .row { gap: 10px; }
-.f-top .status { margin-right: 10px; }
+.f-top .status { margin-right: 0; box-shadow: none; }
 
 /* secondary sensor channels under the main reading */
 .sensor { margin: 0; display: grid; grid-template-columns: auto auto; column-gap: 16px; row-gap: 4px; font-size: 12px; color: var(--muted); }
@@ -217,4 +223,4 @@ button:disabled { opacity: 0.5; cursor: default; }
 .sensor-warn dd { color: var(--alert); font-weight: 600; }
 .sensor-next dd { color: #5eead4; }
 .map-seg + .map-seg { margin-left: 2px; }
-.source-toggle { height: 28px; box-shadow: none; }
+.source-toggle { box-shadow: none; }

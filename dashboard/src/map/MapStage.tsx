@@ -59,7 +59,7 @@ export default function MapStage(props: MapProps & { legend?: boolean }) {
       <div className="map-ctrl" style={{ right: ins.right + 16, bottom: ins.bottom + 16 }}>
         {moved && (!props.follow || mode === 'fp') && (
           <button className="map-btn recenter" onClick={doRecenter} title="Recenter (C)">
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
               <circle cx="8" cy="8" r="5" /><circle cx="8" cy="8" r="1.4" fill="currentColor" />
               <path d="M8 0v3M8 13v3M0 8h3M13 8h3" />
             </svg>

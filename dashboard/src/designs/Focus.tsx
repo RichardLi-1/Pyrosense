@@ -17,7 +17,7 @@ export default function Focus({ s, setUntil, view, select, setSource, gas }: Des
                alerts={s.alerts} threshold={s.threshold} {...view} gas={gas} inset={{ left: 390, top: 40, bottom: playback ? 70 : 20 }} />
       <Waiting s={s} />
       <header className="f-top">
-        <span className="brand"><Logo height={60} /></span>
+        <a className="brand" href="/landing/" title="About this project"><Logo height={60} /></a>
         <div className="row"><Status s={s} /><PlaybackToggle on={playback} set={setPlayback} /><SourceToggle kind={s.kind} setSource={setSource} /></div>
       </header>
       <section className="f-reading">

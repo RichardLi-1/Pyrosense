@@ -31,18 +31,20 @@ export function Reading({ voc }: { voc: number | null }) {
 }
 
 /** Last 60 s of readings. */
-export function Sparkline({ points, width = 220, height = 36 }: { points: [number, number][]; width?: number; height?: number }) {
+export function Sparkline({ points, width = 220, height = 36, color }: { points: [number, number][]; width?: number; height?: number; color?: string }) {
   if (points.length < 2) return <svg className="sparkline" width={width} height={height} />
   const t1 = points[points.length - 1][0], t0 = Math.max(points[0][0], t1 - 60_000), span = Math.max(1000, t1 - t0)
-  const max = Math.max(SCALE.max * 0.1, ...points.map(([, v]) => v))
+  const vals = points.map(([, v]) => v)
+  // TVOC scales from zero against the level scale; other channels scale to their own 60 s range
+  const lo = color ? Math.min(...vals) : 0, hi = color ? Math.max(Math.min(...vals) + 1e-6, ...vals) : Math.max(SCALE.max * 0.1, ...vals)
   const d = points
     .filter(([t]) => t >= t0)
-    .map(([t, v], i) => `${i ? 'L' : 'M'}${(((t - t0) / span) * width).toFixed(1)},${(height - 2 - (v / max) * (height - 4)).toFixed(1)}`)
+    .map(([t, v], i) => `${i ? 'L' : 'M'}${(((t - t0) / span) * width).toFixed(1)},${(height - 2 - ((v - lo) / (hi - lo)) * (height - 4)).toFixed(1)}`)
     .join('')
   const last = points[points.length - 1][1]
   return (
     <svg className="sparkline" width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
-      <path d={d} fill="none" stroke={levelColor(last)} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+      <path d={d} fill="none" stroke={color ?? (level(last) === 'good' ? 'var(--signal, #7dd3fc)' : levelColor(last))} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
     </svg>
   )
 }
@@ -81,7 +83,7 @@ export function SourceToggle({ kind, setSource }: { kind: 'live' | 'demo'; setSo
 export function PlaybackToggle({ on, set }: { on: boolean; set: (on: boolean) => void }) {
   return (
     <button className={`map-btn playback${on ? ' on' : ''}`} onClick={() => set(!on)} aria-pressed={on} title="Scrub back through this session">
-      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M2.5 1.5v9l7.5-4.5z" /></svg>
+      <svg width="14" height="14" viewBox="0 0 12 12" fill="currentColor"><path d="M2.5 1.5v9l7.5-4.5z" /></svg>
       Playback
     </button>
   )
@@ -240,13 +242,16 @@ export function SensorPanel({ sensor }: { sensor: Sensor | null }) {
  * integral of the reading over time), from the forecast whether this spot is projected
  * to cross the alert threshold within five minutes, and where to sample next (GP variance).
  */
-type OutlookNumbers = { dose: number | null; eta: number | null; peak: number | null; next: ReturnType<typeof chooseNext> | null }
+type OutlookNumbers = { dose: number | null; doseSeries: [number, number][]; eta: number | null; peak: number | null; next: ReturnType<typeof chooseNext> | null }
 function outlookNumbers(s: Dashboard, gas: GasModel | null): OutlookNumbers {
   const pts = s.history.filter((p) => (p.wearer ?? 'A') === s.selected)
   let dose = 0
+  const doseSeries: [number, number][] = [] // cumulative exposure over time, for the tile sparkline
   for (let i = 1; i < pts.length; i++) {
-    const dt = (Date.parse(pts[i].ts) - Date.parse(pts[i - 1].ts)) / 60_000
+    const t = Date.parse(pts[i].ts)
+    const dt = (t - Date.parse(pts[i - 1].ts)) / 60_000
     if (dt > 0 && dt < 2) dose += ((pts[i].voc + pts[i - 1].voc) / 2) * dt
+    doseSeries.push([t, dose])
   }
   let eta: number | null = null, peak: number | null = null
   const fc = gas?.forecast
@@ -259,7 +264,7 @@ function outlookNumbers(s: Dashboard, gas: GasModel | null): OutlookNumbers {
     }
   }
   const next = gas && s.until == null ? chooseNext(gas.next, s.pose, gas.field) : null
-  return { dose: pts.length > 1 ? dose : null, eta, peak, next }
+  return { dose: pts.length > 1 ? dose : null, doseSeries, eta, peak, next }
 }
 
 const kfmt = (v: number) => (v >= 10_000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(0))
@@ -282,11 +287,12 @@ export function Outlook({ s, gas }: { s: Dashboard; gas: GasModel | null }) {
   )
 }
 
-function Tile({ caption, value, unit, title, tone }: { caption: string; value: string; unit?: string; title?: string; tone?: 'warn' | 'next' }) {
+function Tile({ caption, value, unit, title, tone, spark }: { caption: string; value: string; unit?: string; title?: string; tone?: 'warn' | 'next'; spark?: [number, number][] }) {
   return (
     <div className={`tile${tone ? ` tile--${tone}` : ''}`} title={title}>
       <span className="caption">{caption}</span>
       <span className="tile-value mono">{value}{unit && <span className="tile-unit">{unit}</span>}</span>
+      {spark && <Sparkline points={spark} width={150} height={22} color="var(--signal, #7dd3fc)" />}
     </div>
   )
 }
@@ -298,18 +304,21 @@ function Tile({ caption, value, unit, title, tone }: { caption: string; value: s
  */
 export function SensorTiles({ s, gas }: { s: Dashboard; gas: GasModel | null }) {
   const sensor = s.sensor
-  const { dose, eta, peak, next: nx } = outlookNumbers(s, gas)
+  const { dose, doseSeries, eta, peak, next: nx } = outlookNumbers(s, gas)
   if (!sensor && dose == null && eta == null && !nx) return null
+  const w = s.sensorWindow
+  const t60 = Date.now() - 60_000
+  const recent = doseSeries.filter(([t]) => t >= t60)
   const n = (v: number | null | undefined, d = 0) => (v == null ? '—' : v.toFixed(d))
   const unit = SCALE.short || 'idx'
   return (
     <div className="tiles">
       {sensor && <>
-        <Tile caption="eCO₂ · ppm" value={n(sensor.eco2)} title="Estimated from the H₂ signal, not measured" />
-        <Tile caption="Raw H₂" value={n(sensor.raw_h2)} />
-        <Tile caption="Raw EtOH" value={n(sensor.raw_ethanol)} />
+        <Tile caption="eCO₂ · ppm" value={n(sensor.eco2)} title="Estimated from the H₂ signal, not measured" spark={w.eco2} />
+        <Tile caption="Raw H₂" value={n(sensor.raw_h2)} spark={w.raw_h2} />
+        <Tile caption="Raw EtOH" value={n(sensor.raw_ethanol)} spark={w.raw_ethanol} />
       </>}
-      {dose != null && <Tile caption={`Exposure · ${unit}·min`} value={kfmt(dose)} title="Reading integrated over this session" />}
+      {dose != null && <Tile caption={`Exposure · ${unit}·min`} value={kfmt(dose)} title="Reading integrated over this session" spark={recent} />}
       {eta != null
         ? <Tile caption="Projected" value={`≤${eta / 60}`} unit="min to alert" tone="warn" title={`Forecast to pass ${s.threshold} here`} />
         : peak != null && <Tile caption="Projected" value={peak.toFixed(0)} unit="in 5 min" title="Diffusion forecast at this position" />}

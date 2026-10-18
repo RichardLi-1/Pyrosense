@@ -298,6 +298,18 @@ export function createDemoSource(): DataSource {
     t: 'pose', ts: iso(t), x: a.x, y: a.y, heading: a.heading, roll: a.roll, pitch: a.pitch, voc: a.lastVoc, wearer: a.id,
   }))
   const until = (ms: number | null) => (ms == null ? t : ms / 1000 - t0)
+  // Secondary channels, shaped like the SGP30's: eCO2 tracks the VOC index, raw counts drift slowly with a little noise.
+  const sensorFrame = (): LiveEvent => {
+    const voc = agents[0].lastVoc ?? 0
+    const wob = (f: number, ph: number) => Math.sin(t * f + ph)
+    return {
+      t: 'sensor', ts: iso(t), voc, unit: 'index',
+      eco2: Math.round(400 + voc * 4.2 + 12 * wob(0.37, 1.3) + (Math.random() - 0.5) * 6),
+      raw_h2: Math.round(13200 - voc * 9 + 40 * wob(0.11, 0.4) + (Math.random() - 0.5) * 10),
+      raw_ethanol: Math.round(18700 - voc * 14 + 55 * wob(0.08, 2.1) + (Math.random() - 0.5) * 12),
+      temperature: 22.4 + 0.3 * wob(0.02, 0), humidity: 41 + 1.5 * wob(0.015, 1), warmed_up: t > 20,
+    }
+  }
 
   return {
     kind: 'demo',
@@ -314,7 +326,8 @@ export function createDemoSource(): DataSource {
       const id = window.setInterval(() => {
         for (let k = 0; k < speed; k++) step(0.1)
         poseEvents().forEach(onEvent)
-        if (++ticks % 10 === 0) { renderMap(); onEvent({ t: 'map', ...mapMeta() }) }
+        if (++ticks % 5 === 0) onEvent(sensorFrame()) // 2 Hz, like the real SGP30 driver
+        if (ticks % 10 === 0) { renderMap(); onEvent({ t: 'map', ...mapMeta() }) }
       }, 100)
       return () => { clearInterval(id); emit = null }
     },
