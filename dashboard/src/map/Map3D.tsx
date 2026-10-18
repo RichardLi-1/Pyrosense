@@ -11,7 +11,6 @@ import { gasCloud, predict, PRIOR_WEIGHT, type GasCloud } from '../lib/predict'
 import type { Source } from '../lib/sourceModel'
 import { SCALE } from '../lib/colors'
 import { drawMark, markKind, type Mark } from '../lib/marks'
-import { chooseNext, predictMovement, type Movement } from '../lib/nextSample'
 import { Plume } from '../lib/plume'
 import Compass from '../ui/Compass'
 import { uncertaintyImage } from '../lib/uncertainty'
@@ -25,7 +24,6 @@ const EYE_H = 1.6
 const FOV_OVERHEAD = 32
 const FOV_FIRST = 72
 const GAS_SIZE = 1.2 // m, billboard diameter: large, soft, overlapping, so puffs merge into one volume
-const PUFF_SIZE = 1.1 // m, the red prediction puff: large enough to merge, still a distinct red cloud
 
 type Rect = { c0: number; r0: number; w: number; h: number } // grid pixels, image rows (row 0 = max y)
 
@@ -101,7 +99,6 @@ type Api = {
   setFloor: (canvas: HTMLCanvasElement, meta: MapMeta) => void
   setGas: (cloud: GasCloud) => void
   setSources: (sources: Source[]) => void
-  setNext: (n: { mv: Movement; from: { x: number; y: number } | null } | null) => void
   setPlumeMask: (m: { data: Uint8Array; meta: MapMeta }) => void
   setMarks: (marks: Mark[]) => void
   setTheme: () => void
@@ -179,28 +176,6 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     const sourceGroup = new THREE.Group()
     scene.add(sourceGroup)
     const sourceMat = new THREE.LineDashedMaterial({ dashSize: 0.18, gapSize: 0.14, transparent: true, opacity: 0.9 })
-    // next-best sample: a dotted ring with a crosshair, where the GP is least sure
-    const nextGroup = new THREE.Group()
-    scene.add(nextGroup)
-    // soft red disc: a radial-gradient sprite texture on a floor-facing plane
-    const nextTex = (() => {
-      const c = document.createElement('canvas'); c.width = c.height = 128
-      const g = c.getContext('2d')!
-      const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64)
-      grad.addColorStop(0, 'rgba(255,255,255,0.25)'); grad.addColorStop(0.55, 'rgba(255,255,255,0.12)'); grad.addColorStop(1, 'rgba(255,255,255,0)')
-      g.fillStyle = grad; g.fillRect(0, 0, 128, 128)
-      const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t
-    })()
-    const nextMat = new THREE.MeshBasicMaterial({ map: nextTex, color: 0xff2d3f, transparent: true, depthTest: true, depthWrite: false, side: THREE.DoubleSide })
-    nextGroup.renderOrder = 4 // after the walls, so solid geometry hides it
-    // the forming cloud: a low red puff stack that travels toward the predicted spot (additive, wall-occluded)
-    const puffMat = gasMat.clone()
-    puffMat.blending = THREE.AdditiveBlending
-    const puff = new THREE.Points(new THREE.BufferGeometry(), puffMat)
-    puff.frustumCulled = false
-    puff.renderOrder = 4
-    scene.add(puff)
-    let moveTo: { mv: Movement; from: { x: number; y: number } | null } | null = null
 
     // commander's annotations: always-on-top pins, constant screen size
     const markGroup = new THREE.Group()
@@ -273,10 +248,9 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       for (const pr of people.values()) pr.color = '' // repaint next frame
       alertMat.color.set(T.alert)
       sourceMat.color.set(T.alert)
-      nextMat.color.set(T.next)
       gasMat.blending = T.glow3d === 'additive' ? THREE.AdditiveBlending : THREE.NormalBlending
       gasMat.needsUpdate = true
-      liveMat.needsUpdate = true; puffMat.needsUpdate = true
+      liveMat.needsUpdate = true
     }
     setTheme()
 
@@ -396,33 +370,6 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
           line.computeLineDistances()
           sourceGroup.add(line)
         }
-      },
-      setNext(n) {
-        for (const c of [...nextGroup.children]) { nextGroup.remove(c); (c as THREE.Mesh).geometry.dispose() }
-        moveTo = n
-        if (!n) { puff.geometry.dispose(); puff.geometry = new THREE.BufferGeometry(); return }
-        const { mv } = n
-        // a soft red disc on the floor over the region
-        const disc = new THREE.Mesh(new THREE.PlaneGeometry(mv.r * 2, mv.r * 2), nextMat)
-        disc.rotation.x = -Math.PI / 2
-        disc.position.set(mv.x, 0.04, -mv.y)
-        nextGroup.add(disc)
-        // the puff: a stack of red points, positioned each frame as it travels
-        const n0 = 36
-        const pos = new Float32Array(n0 * 3), col = new Float32Array(n0 * 3), alp = new Float32Array(n0), ph = new Float32Array(n0)
-        const hash = (i: number, k: number) => { const x = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453; return x - Math.floor(x) }
-        for (let i = 0; i < n0; i++) {
-          const ang = hash(i, 1) * Math.PI * 2, rad = Math.sqrt(hash(i, 2)) * mv.r * 0.7
-          pos[i * 3] = Math.cos(ang) * rad; pos[i * 3 + 1] = 0.3 + hash(i, 3) * 1.1; pos[i * 3 + 2] = Math.sin(ang) * rad
-          col[i * 3] = 1; col[i * 3 + 1] = 0.18; col[i * 3 + 2] = 0.25
-          alp[i] = 0.55; ph[i] = hash(i, 4) * Math.PI * 2
-        }
-        const g = new THREE.BufferGeometry()
-        g.setAttribute('position', new THREE.BufferAttribute(pos, 3))
-        g.setAttribute('aColor', new THREE.BufferAttribute(col, 3))
-        g.setAttribute('aAlpha', new THREE.BufferAttribute(alp, 1))
-        g.setAttribute('aPhase', new THREE.BufferAttribute(ph, 1))
-        puff.geometry.dispose(); puff.geometry = g
       },
       setMarks(marks) {
         for (const c of [...markGroup.children]) { markGroup.remove(c); ((c as THREE.Sprite).material as THREE.SpriteMaterial).dispose() }
@@ -554,7 +501,6 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       }
       gas.visible = P.layers.gas
       sourceGroup.visible = P.layers.source
-      nextGroup.visible = P.layers.next
       markGroup.visible = P.layers.marks
       {
         const sm = (0.16 * 2) / size.h * 80 // ~80 px tall whatever the viewport
@@ -631,7 +577,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         controls.update()
       }
 
-      // live cloud from the plume (rebuilt a few times a second), and the travelling red puff
+      // live cloud from the plume (rebuilt a few times a second)
       if (P.layers.gas && P.meta) {
         const wall = Date.now()
         plume.sync(P.trail, P.until ?? wall)
@@ -648,18 +594,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         }
         liveGas.visible = true
       } else liveGas.visible = false
-      if (moveTo) {
-        const { mv, from } = moveTo
-        const f = ((tnow % 1500) / 1500), ease = 1 - (1 - f) * (1 - f)
-        let x0 = mv.x, y0 = mv.y
-        if (from) {
-          const ddx = mv.x - from.x, ddy = mv.y - from.y, len = Math.hypot(ddx, ddy)
-          if (len > 1e-3) { const k = Math.min(1.5, len * 0.4) / len; x0 = from.x + ddx * k; y0 = from.y + ddy * k }
-        }
-        puff.position.set(x0 + (mv.x - x0) * (0.25 + 0.75 * ease), 0, -(y0 + (mv.y - y0) * (0.25 + 0.75 * ease)))
-        puff.visible = true
-      } else puff.visible = false
-      for (const [m, sz, al] of [[liveMat, GAS_SIZE, 0.35], [puffMat, PUFF_SIZE, 1]] as const) {
+      for (const [m, sz, al] of [[liveMat, GAS_SIZE, 0.35]] as const) {
         m.uniforms.uTime.value = (performance.now() - t0) / 1000
         m.uniforms.uScale.value = (sz * size.h * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360))
         m.uniforms.uMaxSize.value = 220 * renderer.getPixelRatio()
@@ -773,13 +708,6 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     api.current.setSources(model?.sources ?? [])
     api.current.setFloor(c, meta)
   }, [meta, theme, heat, model, layers.gas, layers.uncertainty, field])
-
-  // next-best sample: re-pick when the model or the selected wearer's position changes
-  const { gas, pose, horizon } = props
-  useEffect(() => {
-    const mv = gas && horizon == null ? predictMovement(gas, pose, chooseNext(gas.next, pose, gas.field)) : null
-    api.current?.setNext(mv ? { mv, from: pose } : null)
-  }, [gas, pose, horizon])
 
   useEffect(() => { api.current?.setMarks(marks) }, [marks])
   useEffect(() => { api.current?.setTheme() }, [theme])

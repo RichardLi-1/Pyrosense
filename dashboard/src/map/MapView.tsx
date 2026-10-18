@@ -3,7 +3,6 @@ import { SCALE } from '../lib/colors'
 import { bandImage, isolines, kernelGrid, layerGrid, strokeIsolines, type HeatImage, type Isoline } from '../lib/heatImage'
 import { predict, predictedOnly } from '../lib/predict'
 import { drawMark, markKind } from '../lib/marks'
-import { chooseNext, explainMovement, predictMovement } from '../lib/nextSample'
 import { Plume, type FreeMask } from '../lib/plume'
 import { DisplayField } from '../lib/diffuse'
 import { DEFAULT_WEARER, responderLabel } from '../lib/types'
@@ -139,7 +138,6 @@ export default function MapView(props: RendererProps) {
     const stripes = stripePattern(pctx)
     let raf = 0
     let cam: Camera | null = null
-    let marker: { x: number; y: number; r: number; text: string } | null = null // next-sample marker on screen, for its tooltip
     let lastFrame = 0
     const shown = new Map<string, { x: number; y: number; h: number }>()
     const seenAlerts = new Set<string>()
@@ -353,56 +351,6 @@ export default function MapView(props: RendererProps) {
         }
         ctx.restore()
       }
-      // where a reading would help most (GP variance), from where the selected wearer stands
-      const nx = P.gas && P.horizon == null ? chooseNext(P.gas.next, me ?? P.pose, P.gas.field) : null
-      const mv = P.layers.next && P.gas && P.horizon == null ? predictMovement(P.gas, me ?? P.pose, nx) : null
-      if (mv && P.gas) {
-        // the haze drifts from beside the wearer to where the gas is heading: 6 s travel, 2 s hold
-        const from = me ?? P.pose
-        const f = Math.min(1, (now % 8000) / 6000)
-        const ease = 1 - (1 - f) * (1 - f) * (1 - f)
-        let x0 = mv.x, y0 = mv.y
-        if (from) {
-          const dx = mv.x - from.x, dy = mv.y - from.y, len = Math.hypot(dx, dy)
-          if (len > 1e-3) { const k = Math.min(1.5, len * 0.4) / len; x0 = from.x + dx * k; y0 = from.y + dy * k }
-        }
-        const cxm = x0 + (mv.x - x0) * (0.25 + 0.75 * ease), cym = y0 + (mv.y - y0) * (0.25 + 0.75 * ease)
-        const x = sx(cxm), y = sy(cym), r = Math.max(10, mv.r * c.scale)
-        const a = 0.6
-        marker = { x: sx(mv.x), y: sy(mv.y), r, text: explainMovement(mv, null).join(' · ') }
-        // the same kind of picture as the field: a flat, blurred red region, clipped to scanned floor
-        if (layer.width !== canvas.width || layer.height !== canvas.height) { layer.width = canvas.width; layer.height = canvas.height }
-        lctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-        lctx.globalCompositeOperation = 'source-over'
-        lctx.clearRect(0, 0, w, h)
-        const red = '#ff2d3f' // unmistakably red at a glance, whatever the theme's accent
-        const g = lctx.createRadialGradient(x, y, 0, x, y, r)
-        g.addColorStop(0, hexA(red, a)); g.addColorStop(0.5, hexA(red, a * 0.6)); g.addColorStop(0.85, hexA(red, a * 0.15)); g.addColorStop(1, hexA(red, 0))
-        lctx.filter = `blur(${Math.max(2, r * 0.12)}px)`
-        lctx.fillStyle = g
-        lctx.beginPath(); lctx.arc(x, y, r, 0, Math.PI * 2); lctx.fill()
-        lctx.filter = 'none'
-        if (mapRect && free.current) {
-          lctx.globalCompositeOperation = 'destination-in'
-          lctx.imageSmoothingEnabled = false
-          lctx.drawImage(free.current, ...mapRect)
-        }
-        ctx.save()
-        ctx.setTransform(1, 0, 0, 1, 0, 0)
-        ctx.drawImage(layer, 0, 0)
-        ctx.restore()
-        ctx.save()
-        ctx.font = '700 12px Inter, system-ui, sans-serif'
-        ctx.textAlign = 'center'
-        ctx.letterSpacing = '0.08em' // small-caps style, like the rail captions
-        ctx.lineJoin = 'round'
-        ctx.lineWidth = 3
-        ctx.strokeStyle = 'rgba(7,9,13,0.85)' // dark halo so it reads over any field
-        ctx.strokeText('GAS MOVEMENT PREDICTION', sx(mv.x), sy(mv.y) - r - 8)
-        ctx.fillStyle = '#ffffff'
-        ctx.fillText('GAS MOVEMENT PREDICTION', sx(mv.x), sy(mv.y) - r - 8)
-        ctx.restore()
-      } else marker = null
 
       // trails: the last 90 s per wearer, fading with age (the heat carries VOC)
       const byWearer = new Map<string, typeof P.trail>()
@@ -556,12 +504,6 @@ export default function MapView(props: RendererProps) {
     let down: { x: number; y: number } | null = null
     const onDown = (e: MouseEvent) => { drag = down = pt(e) }
     const onMove = (e: MouseEvent) => {
-      if (e.target === canvas) { // the next-sample marker explains itself on hover
-        const q = pt(e)
-        const near = marker && Math.hypot(q.x - marker.x, q.y - marker.y) < marker.r
-        const tip = near ? `GAS MOVEMENT PREDICTION\n${marker!.text.split(' · ').join('\n')}` : ''
-        if (canvas.title !== tip) canvas.title = tip
-      }
       if (!drag || !cam) return
       const q = pt(e)
       if (q.x === drag.x && q.y === drag.y) return
