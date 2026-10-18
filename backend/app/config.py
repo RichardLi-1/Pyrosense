@@ -52,5 +52,5 @@ class Settings:
     db_max_buffer_rows: int = field(default_factory=lambda: int(_env("DB_MAX_BUFFER_ROWS", "50000")))
     live_pose_hz: float = field(default_factory=lambda: float(_env("LIVE_POSE_HZ", "10")))
     voc_window_seconds: float = 60.0
-    heatmap_default_half_life: float = float(_env("HEATMAP_HALF_LIFE", "600"))  # s; readings persist on the map ~10 min
+    heatmap_default_half_life: float = float(_env("HEATMAP_HALF_LIFE", "180"))  # s; brief exposures fade within a few minutes
     summary_cache_seconds: float = 60.0
