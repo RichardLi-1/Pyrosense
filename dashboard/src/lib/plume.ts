@@ -33,6 +33,8 @@ export class Plume {
   private parts: Particle[] = []
   private seen = new Set<string>()
   private firstKey: string | null = null
+  private rebuilding = false // true while re-emitting a whole trail (replay/review): stricter gating and caps
+  private splatKeys = new Set<string>()
   private mask: FreeMask | null = null
   private sprites = new Map<Level, HTMLCanvasElement>()
   private rng = 1234567
@@ -42,7 +44,7 @@ export class Plume {
   get count() { return this.parts.length }
 
   /** Forget everything (new session, new source). */
-  reset() { this.blooms = []; this.parts = []; this.seen.clear(); this.firstKey = null }
+  reset() { this.blooms = []; this.parts = []; this.seen.clear(); this.splatKeys.clear(); this.firstKey = null }
 
   /**
    * Bring the cloud in line with the trail: new points are emitted; if the trail was
@@ -55,12 +57,14 @@ export class Plume {
     const lastKey = trail.length ? key(trail[trail.length - 1]) : null
     const replaced = first !== this.firstKey || (lastKey && !this.seen.has(lastKey) && trail.length < this.seen.size)
     if (replaced) { this.reset(); this.firstKey = first }
+    this.rebuilding = !!replaced
     for (const p of trail) {
       const k = key(p)
       if (this.seen.has(k)) continue
       this.seen.add(k)
       this.emit(p, now - Date.parse(p.ts))
     }
+    this.rebuilding = false
   }
 
   private recent: number[] = [] // last readings, for a running background estimate
@@ -71,9 +75,17 @@ export class Plume {
     const lift = SCALE.unit === 'index' ? 10 : 25 // what counts as "above background"
     if (!(p.voc >= background + lift) && !(p.voc >= a)) return
     const lv = level(p.voc)
+    const ts = Date.parse(p.ts) // the reading's own clock: ages stay right in replay
+    if (this.rebuilding && p.voc < a) return // a whole-trail rebuild keeps only elevated readings
     if (p.voc >= a) {
-      this.blooms.push({ x: p.x, y: p.y, t: Date.parse(p.ts), level: lv }) // the reading's own clock: ages stay right in replay
-      if (this.blooms.length > MAX_BLOOMS) this.blooms.splice(0, this.blooms.length - MAX_BLOOMS)
+      // in a rebuild, one splat per 20 cm cell per 30 s window, at most 300 in total
+      const sk = `${Math.floor(p.x / 0.2)},${Math.floor(p.y / 0.2)},${Math.floor(ts / 30_000)}`
+      if (!this.rebuilding || !this.splatKeys.has(sk)) {
+        this.splatKeys.add(sk)
+        this.blooms.push({ x: p.x, y: p.y, t: ts, level: lv })
+        const cap = this.rebuilding ? 300 : MAX_BLOOMS
+        if (this.blooms.length > cap) this.blooms.splice(0, this.blooms.length - cap)
+      }
     }
     // light readings drift a little; elevated ones a lot
     const n = p.voc >= a ? Math.min(MAX_PER_EVENT, Math.ceil((8 * (p.voc - a)) / a) + 2) : Math.min(3, 1 + Math.floor((p.voc - background) / (2 * lift)))
@@ -88,7 +100,8 @@ export class Plume {
       }
       this.parts.push(q)
     }
-    if (this.parts.length > MAX_PARTICLES) this.parts.splice(0, this.parts.length - MAX_PARTICLES)
+    const pcap = this.rebuilding ? 1500 : MAX_PARTICLES
+    if (this.parts.length > pcap) this.parts.splice(0, this.parts.length - pcap)
   }
 
   private rand() { this.rng = (this.rng * 1103515245 + 12345) & 0x7fffffff; return this.rng / 0x7fffffff }
@@ -175,7 +188,7 @@ export class Plume {
   draw(ctx: CanvasRenderingContext2D, sx: (x: number) => number, sy: (y: number) => number, scale: number, now: number,
        opts: { particles?: boolean } = {}) {
     ctx.save()
-    ctx.globalCompositeOperation = 'lighter'
+    ctx.globalCompositeOperation = 'source-over' // splats do not stack past their own alpha
     for (const b of this.blooms) {
       const age = Math.max(0, now - b.t)
       const pop = Math.min(1, age / 600) // swells in over the first moments
@@ -186,6 +199,7 @@ export class Plume {
       ctx.drawImage(this.sprite(b.level), sx(b.x) - r, sy(b.y) - r, r * 2, r * 2)
     }
     ctx.globalAlpha = 1
+    ctx.globalCompositeOperation = 'lighter'
     const d = Math.max(3, SPRITE_R_M * 2 * scale)
     if (opts.particles !== false) for (const q of this.parts) {
       const a = 0.22 * GAIN_2D[q.level] * Math.pow(0.5, Math.max(0, now - q.born) / (HALF_LIFE_S * 1000))
