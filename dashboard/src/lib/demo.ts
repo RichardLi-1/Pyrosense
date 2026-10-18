@@ -4,7 +4,7 @@
 // (plus a `wearer` id), so the dashboard can't tell the difference.
 //
 //   ?crew=3   number of firefighters (1-4)     ?speed=1   sim speed multiplier
-import type { Alert, DataSource, HeatCell, LiveEvent, MapMeta, Summary, TrailPoint } from './types'
+import type { Alert, DataSource, HeatCell, LiveEvent, MapMeta, Summary, TrailPoint, Warning } from './types'
 import { CELL_SIZE } from './types'
 
 const RES = 0.05
@@ -125,6 +125,25 @@ export function createDemoSource(): DataSource {
   }))
   const readings: Reading[] = []
   const alerts: Alert[] = []
+  // spoken warnings, like the backend's: the live reading above 100 for 3 s, then at most one per 90 s
+  const warnings: Warning[] = []
+  let warnAbove: number | null = null, warnLast: number | null = null
+  const warnMaybe = (r: Reading) => {
+    if (r.voc <= 100) { warnAbove = null; return }
+    warnAbove ??= t
+    if (t - warnAbove < 3 || (warnLast != null && t - warnLast < 90)) return
+    warnLast = t
+    const lvl = r.voc >= 400 ? 'hazardous' : r.voc >= 250 ? 'poor' : 'moderate'
+    const text = lvl === 'hazardous'
+      ? `Hazardous air here, VOC index ${r.voc.toFixed(0)}. Move out of this room and report it.`
+      : lvl === 'poor' ? `Air quality is poor here, VOC index ${r.voc.toFixed(0)}. Keep moving and watch for a source nearby.`
+      : `Elevated volatile organics here, VOC index ${r.voc.toFixed(0)}. Note the spot and keep scanning.`
+    const w: Warning = { id: `demo-w-${warnings.length + 1}`, ts: iso(t), voc: r.voc, unit: 'index', level: lvl, x: r.x, y: r.y,
+                         text, source: 'fallback', audio_url: null, voice: 'browser' }
+    warnings.unshift(w)
+    emit?.({ t: 'warning', ...w })
+  }
+
   let mapVersion = 0
   let emit: ((e: LiveEvent) => void) | null = null
 
@@ -254,6 +273,7 @@ export function createDemoSource(): DataSource {
     readings.push(r)
     a.lastVoc = r.voc
     emit?.({ t: 'voc', ts: iso(t), voc: r.voc, n_new: 1, x: r.x, y: r.y, wearer: a.id })
+    if (a === agents[0]) warnMaybe(r)
     if (r.voc <= THRESHOLD) { a.aboveSince = null; return }
     a.aboveSince ??= t
     if (t - a.aboveSince < HOLD_S || (a.lastFired != null && t - a.lastFired < COOLDOWN_S)) return
@@ -374,6 +394,10 @@ export function createDemoSource(): DataSource {
 
     async mapImage() {
       return canvas
+    },
+
+    async warnings() {
+      return { threshold: 100, unit: 'index' as const, voice: 'browser' as const, gemini: false, items: warnings.slice(0, 20) }
     },
   }
 }

@@ -25,7 +25,8 @@ const MAX_PARTICLES = 4000
 const MAX_PER_EVENT = 40
 const SIGMA = 0.55 // m/√s: ~0.07 m per frame at 60 fps
 const DRIFT = 0.06 // m/s up the forecast gradient
-const SPRITE_R_M = 0.32
+const SPRITE_R_M = 0.5 // large and soft so neighbours merge into haze rather than speckle
+const GAIN_2D: Record<Level, number> = { good: 0.3, moderate: 0.8, poor: 1, alert: 1.2 }
 
 export class Plume {
   private blooms: Bloom[] = []
@@ -62,13 +63,20 @@ export class Plume {
     }
   }
 
+  private recent: number[] = [] // last readings, for a running background estimate
   private emit(p: TrailPoint, ageMs: number) {
     const [a] = SCALE.bands
-    if (!(p.voc >= a)) return
+    this.recent.push(p.voc); if (this.recent.length > 90) this.recent.shift()
+    const background = Math.min(...this.recent)
+    const lift = SCALE.unit === 'index' ? 10 : 25 // what counts as "above background"
+    if (!(p.voc >= background + lift) && !(p.voc >= a)) return
     const lv = level(p.voc)
-    this.blooms.push({ x: p.x, y: p.y, t: Date.now() - Math.max(0, ageMs), level: lv })
-    if (this.blooms.length > MAX_BLOOMS) this.blooms.splice(0, this.blooms.length - MAX_BLOOMS)
-    const n = Math.min(MAX_PER_EVENT, Math.ceil((8 * (p.voc - a)) / a) + 2)
+    if (p.voc >= a) {
+      this.blooms.push({ x: p.x, y: p.y, t: Date.now() - Math.max(0, ageMs), level: lv })
+      if (this.blooms.length > MAX_BLOOMS) this.blooms.splice(0, this.blooms.length - MAX_BLOOMS)
+    }
+    // light readings drift a little; elevated ones a lot
+    const n = p.voc >= a ? Math.min(MAX_PER_EVENT, Math.ceil((8 * (p.voc - a)) / a) + 2) : Math.min(3, 1 + Math.floor((p.voc - background) / (2 * lift)))
     const ageS = Math.max(0, ageMs / 1000)
     for (let i = 0; i < n; i++) {
       const q: Particle = { x: p.x, y: p.y, born: Date.now() - ageMs, level: lv }
@@ -179,8 +187,8 @@ export class Plume {
     ctx.globalAlpha = 1
     const d = Math.max(3, SPRITE_R_M * 2 * scale)
     for (const q of this.parts) {
-      const a = 0.28 * Math.pow(0.5, (now - q.born) / (HALF_LIFE_S * 1000))
-      if (a < 0.012) continue
+      const a = 0.22 * GAIN_2D[q.level] * Math.pow(0.5, (now - q.born) / (HALF_LIFE_S * 1000))
+      if (a < 0.008) continue
       ctx.globalAlpha = a
       ctx.drawImage(this.sprite(q.level), sx(q.x) - d / 2, sy(q.y) - d / 2, d, d)
     }

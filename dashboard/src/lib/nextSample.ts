@@ -175,7 +175,7 @@ export function bearing(from: { x: number; y: number }, to: { x: number; y: numb
 
 export type Movement = {
   x: number; y: number // where the gas is predicted to be heading
-  r: number // metres, haze radius (1.5–3 m)
+  r: number // metres, haze radius (2.5–4.5 m)
   value: number; level: Level // forecast value and band there at +1 min
   sd: number; confidence: 'High' | 'Medium' | 'Low' // GP sd at the spot vs σf
   arriveS: number | null // first horizon at which the spot crosses the moderate band; 0 if already there; null if never
@@ -224,7 +224,7 @@ export function predictMovement(gas: { field: Field | null; forecast: Forecast |
   if (nowV >= SCALE.bands[0]) arriveS = 0
   else if (fc) for (let h = 0; h < fc.horizons.length; h++) { if (at(fc, fc.mean[h], x, y) >= SCALE.bands[0]) { arriveS = fc.horizons[h]; break } }
   const pSource = sp && sp.peak > 0 ? Math.min(1, Math.max(0, at(sp, sp.prob, x, y) / sp.peak)) : 0
-  const r = Math.min(3, Math.max(1.5, nx?.r ?? 1.5))
+  const r = Math.min(4.5, Math.max(2.5, (nx?.r ?? 1) * 1.6))
   return { x, y, r, value: Number.isNaN(v) ? field.base : v, level: level(Number.isNaN(v) ? 0 : v), sd, confidence, arriveS, pSource, fromCandidate }
 }
 

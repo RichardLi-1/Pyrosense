@@ -1,5 +1,5 @@
 // Focus: the map is the screen. One big reading floats over it; everything else is quiet.
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import MapStage from '../map/MapStage'
 import { THEMES } from '../map/theme'
 import type { LayerKey } from '../map/layers'
@@ -10,10 +10,11 @@ import Logo from '../ui/Logo'
 import { AnnotateBar } from '../ui/Annotate'
 import { ExposurePanel, ExposureToggle } from '../ui/Exposure'
 import { RestartScan, SaveScan, ScansButton } from '../ui/scans'
+import { VoiceToggle, WarningsButton, WarningsPanel, useVoice, useVoiceSetting } from '../ui/warnings'
 import { AlertBanner, Attitude, Crew, PlaybackToggle, Reading, SensorTiles, Sparkline, SourceToggle, Status, Timeline, Waiting, useNow } from '../ui/parts'
 import type { DesignProps } from './types'
 
-export default function Focus({ s, setUntil, view, setView, select, setSource, gas, scans }: DesignProps) {
+export default function Focus({ s, setUntil, view, setView, select, setSource, gas, scans, markWarningsRead }: DesignProps) {
   const now = useNow()
   const [playback, setPlaybackState] = useState(false)
   const setPlayback = useCallback((on: boolean) => { setPlaybackState(on); if (!on) setUntil(null) }, [setUntil])
@@ -21,6 +22,26 @@ export default function Focus({ s, setUntil, view, setView, select, setSource, g
   const review = s.reviewing
   const scrubber = playback || !!review
   const reviewEnd = review ? (review.ended ? Date.parse(review.ended) : undefined) : undefined
+
+  // spoken warnings: panel slides in on the first live one; voice only when enabled and live
+  const [voice, setVoice] = useVoiceSetting()
+  const [warnOpen, setWarnOpen] = useState(false)
+  const [flash, setFlash] = useState<string | null>(null)
+  const lastWarn = useRef<string | null>(null)
+  const latest = s.warnings[0]?.id ?? null
+  useEffect(() => {
+    if (!latest || latest === lastWarn.current) { lastWarn.current = latest; return }
+    const fresh = lastWarn.current != null // not the seeded history
+    lastWarn.current = latest
+    if (!fresh || review) return
+    setWarnOpen(true)
+    setFlash(latest)
+    const id = window.setTimeout(() => setFlash(null), 1600)
+    return () => clearTimeout(id)
+  }, [latest, review])
+  useEffect(() => { if (warnOpen) markWarningsRead() }, [warnOpen, s.warnings.length, markWarningsRead])
+  useVoice(s.warnings, voice, !!review || s.until != null)
+  const unread = Math.max(0, s.warnings.length - s.warningsSeen)
 
   const setLayer = useCallback((k: LayerKey, on: boolean) => setView((v) => ({ ...v, layers: { ...v.layers, [k]: on } })), [setView])
   const setFollow = useCallback((on: boolean) => setView((v) => ({ ...v, follow: on })), [setView])
@@ -49,7 +70,7 @@ export default function Focus({ s, setUntil, view, setView, select, setSource, g
   return (
     <div className="design d-focus">
       <MapStage theme={THEMES.focus} meta={s.meta} image={s.image} heat={s.heat} trail={s.trail} pose={s.pose} poses={s.poses} selected={s.selected!}
-                alerts={s.alerts} threshold={s.threshold} voc={s.voc} until={s.until} follow={view.follow} layers={view.layers} only={view.only} crew={s.crew}
+                alerts={s.alerts} threshold={s.threshold} voc={s.voc} until={s.until} warnings={s.warnings} follow={view.follow} layers={view.layers} only={view.only} crew={s.crew}
                 marks={marks} onPick={armed ? onPick : null} setLayer={setLayer} setFollow={setFollow}
                 gas={gas} inset={{ left: 390, top: 88, right: 104, bottom: scrubber ? 124 : 72 }} />
       <Waiting s={s} />
@@ -57,6 +78,8 @@ export default function Focus({ s, setUntil, view, setView, select, setSource, g
         <a className="brand" href="/landing/" title="About this project"><Logo height={60} /></a>
         <div className="row">
           <Status s={s} />
+          <WarningsButton count={s.warnings.length} unread={unread} open={warnOpen} toggle={() => setWarnOpen((o) => !o)} />
+          <VoiceToggle on={voice} set={setVoice} />
           <ExposureToggle on={exposure} set={setExposure} />
           {review
             ? <button className="map-btn solid" onClick={scans.close}>Back to live</button>
@@ -68,7 +91,7 @@ export default function Focus({ s, setUntil, view, setView, select, setSource, g
       </header>
       <section className="f-reading">
         <span className="caption">{SCALE.label}</span>
-        <Reading voc={s.voc} />
+        <div className={flash ? 'reading-flash' : undefined}><Reading voc={s.voc} /></div>
         <Sparkline points={s.window} width={340} height={28} />
         <Attitude pose={s.pose} />
         <SensorTiles s={s} gas={gas} />
@@ -76,6 +99,7 @@ export default function Focus({ s, setUntil, view, setView, select, setSource, g
       </section>
       <AnnotateBar marks={marks} armed={armed} setArmed={setArmed} remove={remove} here={here} dropHere={dropHere} now={now} />
       {exposure && <ExposurePanel s={s} now={now} colors={THEMES.focus.crew} pick={pickResponder} close={() => setExposure(false)} />}
+      {warnOpen && <WarningsPanel warnings={s.warnings} flash={flash} onClose={() => setWarnOpen(false)} />}
       <AlertBanner alerts={s.alerts} now={now} crew={s.crew} />
       {scrubber && <footer className="f-bottom">
         <Timeline s={s} now={now} setUntil={setUntil} end={reviewEnd} onLive={review ? { label: 'back to live', go: scans.close } : undefined} />

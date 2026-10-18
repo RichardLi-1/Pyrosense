@@ -1,5 +1,5 @@
 // The real backend, through the /api and /ws proxies (vite.config.ts, deploy/nginx.conf).
-import type { Alert, DataSource, HeatCell, LiveEvent, MapMeta, RestartResult, SaveResult, ScanSession, Summary, TrailPoint } from './types'
+import type { Alert, DataSource, HeatCell, LiveEvent, MapMeta, RestartResult, SaveResult, ScanSession, Summary, TrailPoint, WarningsResponse } from './types'
 
 const api = (path: string) => `/api${path}`
 
@@ -63,6 +63,7 @@ export function createLiveSource(): DataSource {
     },
 
     sessions: () => json<ScanSession[]>('/sessions'),
+    warnings: () => json<WarningsResponse>('/warnings'),
     restart: (name) => post<RestartResult>('/session/restart', name ? { name } : {}),
     save: (name, notes) => post<SaveResult>('/session/save', { ...(name ? { name } : {}), ...(notes ? { notes } : {}) }),
   }

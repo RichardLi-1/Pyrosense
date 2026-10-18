@@ -5,6 +5,7 @@ import { predict, predictedOnly } from '../lib/predict'
 import { drawMark, markKind } from '../lib/marks'
 import { chooseNext, explainMovement, predictMovement } from '../lib/nextSample'
 import { Plume, type FreeMask } from '../lib/plume'
+import { DisplayField } from '../lib/diffuse'
 import { DEFAULT_WEARER, responderLabel } from '../lib/types'
 import { uncertaintyImage } from '../lib/uncertainty'
 import { drawHardHat } from './theme'
@@ -44,6 +45,14 @@ export default function MapView(props: RendererProps) {
   const known = useRef<Box | null>(null) // what has been mapped so far, for the default camera
   const freeMask = useRef<FreeMask | null>(null) // scanned free space as a lookup, for wall-blocked particles
   const plume = useRef(new Plume())
+  const display = useRef(new DisplayField()) // the field as shown: diffusing between updates
+  const isFree = (x: number, y: number) => {
+    const m = freeMask.current
+    if (!m) return true
+    const { origin, res, w, h } = m.meta
+    const c = Math.floor((x - origin[0]) / res), r = h - 1 - Math.floor((y - origin[1]) / res)
+    return c >= 0 && r >= 0 && c < w && r < h && m.data[r * w + c] === 1
+  }
   const { image, meta, theme, heat: cells, recenter, onMoved, model, gas, horizon } = props
   useEffect(() => {
     if (!image || !meta) return
@@ -76,7 +85,6 @@ export default function MapView(props: RendererProps) {
 
   // Heat. With the gas model: the GP field (mean where confident, opacity = confidence),
   // or a forecast horizon. Before the model has run: crisp bands from the kernel-smoothed cells.
-  const CONF_MEASURED = 0.35 // below this a cell is drawn as "predicted" (striped)
   const heat = useRef<HeatImage | null>(null)
   const contours = useRef<Isoline[]>([])
   const predicted = useRef<{ img: HeatImage; lines: Isoline[] } | null>(null)
@@ -89,23 +97,22 @@ export default function MapView(props: RendererProps) {
       const g = layerGrid(fc, fc.mean[h], null, 0.1)
       for (let i = 0; i < g.den.length; i++) if (g.num[i] < SCALE.bands[0] * 0.8) g.den[i] = 0
       heat.current = null; contours.current = []
+      display.current.clear()
       predicted.current = { img: bandImage(g, { minSupport: 0.5, alphaScale: 3.4 }), lines: isolines(g, { minSupport: 0.5 }) }
       return
     }
     if (field) {
       const g = layerGrid(field, field.mean, field.conf, 0.1)
-      const opts = { prior: g.prior, priorWeight: CONF_MEASURED }
-      heat.current = bandImage(g, { ...opts, alphaBy: g.conf, skipThin: true })
-      contours.current = isolines(g, { ...opts, allCorners: true })
-      // thin-confidence part above the first band: the extrapolation, striped
-      const pg = { ...g, num: new Float32Array(g.num.length), den: new Float32Array(g.den.length) }
-      for (let i = 0; i < g.den.length; i++) if (g.conf[i] < CONF_MEASURED && g.num[i] >= SCALE.bands[0]) { pg.num[i] = g.num[i]; pg.den[i] = 1 }
-      predicted.current = { img: bandImage(pg, { minSupport: 0.5, alphaScale: 3.2 }), lines: isolines(pg, { minSupport: 0.5 }) }
+      // shown through the diffusing display field on every passable cell the GP reaches,
+      // fading with distance (alpha 0.2 + 0.8·conf) rather than ending at a confidence cut
+      display.current.setTarget(g, (i) => g.num[i], (i) => g.conf[i] > 0, (i) => 0.2 + 0.8 * g.conf[i], isFree, field.base)
+      predicted.current = null // the main field is continuous; stripes are only for forecast horizons
       return
     }
     const g = kernelGrid(cells, SIGMA_M, 0.05)
-    heat.current = g ? bandImage(g) : null
-    contours.current = g ? isolines(g) : []
+    if (g) display.current.setTarget(g, (i) => (g.den[i] > 0 ? g.num[i] / g.den[i] : NaN), (i) => g.den[i] >= 0.3,
+                                     (i) => Math.min(1, g.den[i] / 0.9), isFree, 0.2 * SCALE.bands[0])
+    else { display.current.clear(); heat.current = null; contours.current = [] }
     if (!model || !cells.length) { predicted.current = null; return }
     const bounds = { x0: model.x0, y0: model.y0, x1: model.x0 + model.cols * model.res, y1: model.y0 + model.rows * model.res }
     const pred = predict(cells, bounds, model, SIGMA_M, model.res)
@@ -137,6 +144,8 @@ export default function MapView(props: RendererProps) {
     const shown = new Map<string, { x: number; y: number; h: number }>()
     const seenAlerts = new Set<string>()
     const rings: { x: number; y: number; t0: number }[] = []
+    const seenWarnings = new Set<string>()
+    const pulses: { x: number; y: number; t0: number }[] = [] // spoken warnings: a smaller, quicker ring
     const setManual = () => {
       if (!manual.current) { manual.current = true; p.current.onMoved(true) }
     }
@@ -223,6 +232,14 @@ export default function MapView(props: RendererProps) {
         ctx.drawImage(occ.current, ...mapRect)
       }
 
+      // the displayed field keeps diffusing between updates (live only); redraw when it moved
+      if (display.current.tick(now, P.until == null)) {
+        const dg = display.current.grid()
+        if (dg) {
+          heat.current = bandImage(dg, { prior: dg.prior, priorWeight: 1, alphaBy: dg.alphaBy, skipThin: true })
+          contours.current = isolines(dg, { prior: dg.prior, priorWeight: 1 })
+        }
+      }
       // heat on its own layer, clipped to scanned free space so it stops at walls
       const hm = heat.current
       if (P.layers.gas && hm && mapRect && free.current) {
@@ -340,10 +357,10 @@ export default function MapView(props: RendererProps) {
       const nx = P.gas && P.horizon == null ? chooseNext(P.gas.next, me ?? P.pose, P.gas.field) : null
       const mv = P.layers.next && P.gas && P.horizon == null ? predictMovement(P.gas, me ?? P.pose, nx) : null
       if (mv && P.gas) {
-        // the haze travels from beside the wearer to where the gas is heading, on a 1.5 s cycle
+        // the haze drifts from beside the wearer to where the gas is heading: 6 s travel, 2 s hold
         const from = me ?? P.pose
-        const f = (now % 1500) / 1500
-        const ease = 1 - (1 - f) * (1 - f)
+        const f = Math.min(1, (now % 8000) / 6000)
+        const ease = 1 - (1 - f) * (1 - f) * (1 - f)
         let x0 = mv.x, y0 = mv.y
         if (from) {
           const dx = mv.x - from.x, dy = mv.y - from.y, len = Math.hypot(dx, dy)
@@ -351,19 +368,39 @@ export default function MapView(props: RendererProps) {
         }
         const cxm = x0 + (mv.x - x0) * (0.25 + 0.75 * ease), cym = y0 + (mv.y - y0) * (0.25 + 0.75 * ease)
         const x = sx(cxm), y = sy(cym), r = Math.max(10, mv.r * c.scale)
-        const a = 0.6 * (0.7 + 0.3 * (1 - f)) // brightest as it sets off, settling as it arrives
+        const a = 0.6
         marker = { x: sx(mv.x), y: sy(mv.y), r, text: explainMovement(mv, null).join(' · ') }
-        ctx.save()
-        const g = ctx.createRadialGradient(x, y, 0, x, y, r)
+        // the same kind of picture as the field: a flat, blurred red region, clipped to scanned floor
+        if (layer.width !== canvas.width || layer.height !== canvas.height) { layer.width = canvas.width; layer.height = canvas.height }
+        lctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        lctx.globalCompositeOperation = 'source-over'
+        lctx.clearRect(0, 0, w, h)
         const red = '#ff2d3f' // unmistakably red at a glance, whatever the theme's accent
-        g.addColorStop(0, hexA(red, a)); g.addColorStop(0.5, hexA(red, a * 0.5)); g.addColorStop(1, hexA(red, 0))
-        ctx.fillStyle = g
-        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill()
-        ctx.fillStyle = T.next
-        ctx.font = '500 10px Inter, system-ui, sans-serif'
+        const g = lctx.createRadialGradient(x, y, 0, x, y, r)
+        g.addColorStop(0, hexA(red, a)); g.addColorStop(0.5, hexA(red, a * 0.6)); g.addColorStop(0.85, hexA(red, a * 0.15)); g.addColorStop(1, hexA(red, 0))
+        lctx.filter = `blur(${Math.max(2, r * 0.12)}px)`
+        lctx.fillStyle = g
+        lctx.beginPath(); lctx.arc(x, y, r, 0, Math.PI * 2); lctx.fill()
+        lctx.filter = 'none'
+        if (mapRect && free.current) {
+          lctx.globalCompositeOperation = 'destination-in'
+          lctx.imageSmoothingEnabled = false
+          lctx.drawImage(free.current, ...mapRect)
+        }
+        ctx.save()
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.drawImage(layer, 0, 0)
+        ctx.restore()
+        ctx.save()
+        ctx.font = '700 12px Inter, system-ui, sans-serif'
         ctx.textAlign = 'center'
         ctx.letterSpacing = '0.08em' // small-caps style, like the rail captions
-        ctx.fillText('GAS MOVEMENT PREDICTION', sx(mv.x), sy(mv.y) - r - 6)
+        ctx.lineJoin = 'round'
+        ctx.lineWidth = 3
+        ctx.strokeStyle = 'rgba(7,9,13,0.85)' // dark halo so it reads over any field
+        ctx.strokeText('GAS MOVEMENT PREDICTION', sx(mv.x), sy(mv.y) - r - 8)
+        ctx.fillStyle = '#ffffff'
+        ctx.fillText('GAS MOVEMENT PREDICTION', sx(mv.x), sy(mv.y) - r - 8)
         ctx.restore()
       } else marker = null
 
@@ -408,6 +445,22 @@ export default function MapView(props: RendererProps) {
         ctx.beginPath()
         ctx.arc(sx(a.x), sy(a.y), 5, 0, Math.PI * 2)
         ctx.stroke()
+      }
+      for (const wn of P.warnings ?? []) {
+        if (seenWarnings.has(wn.id)) continue
+        seenWarnings.add(wn.id)
+        if (P.until == null && Date.now() - Date.parse(wn.ts) < 10_000) pulses.push({ x: wn.x, y: wn.y, t0: now })
+      }
+      for (let i = pulses.length - 1; i >= 0; i--) {
+        const f = (now - pulses[i].t0) / 1100
+        if (f >= 1) { pulses.splice(i, 1); continue }
+        ctx.strokeStyle = '#ff2d3f'
+        ctx.globalAlpha = 1 - f
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(sx(pulses[i].x), sy(pulses[i].y), 4 + f * 34, 0, Math.PI * 2)
+        ctx.stroke()
+        ctx.globalAlpha = 1
       }
       for (let i = rings.length - 1; i >= 0; i--) {
         const f = (now - rings[i].t0) / 1600

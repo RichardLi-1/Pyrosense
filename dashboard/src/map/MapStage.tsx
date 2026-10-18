@@ -119,7 +119,7 @@ export default function MapStage(props: StageProps) {
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
               <path d="M8 1.5 13.5 14 8 11 2.5 14Z" strokeLinejoin="round" />
             </svg>
-            {props.follow ? 'Following' : 'Follow'} {responderLabel(props.crew, props.selected)}
+            {props.follow ? 'Following' : 'Follow'}{props.crew.length > 1 ? ` ${responderLabel(props.crew, props.selected)}` : ''}
           </button>
         )}
         {mode === '2d' && props.layers.gas && gas?.forecast && hasSource && (
