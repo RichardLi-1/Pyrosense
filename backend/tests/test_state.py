@@ -150,3 +150,80 @@ def test_broadcaster_fans_out_and_unsubscribes():
         b.publish({"n": 2})
         assert q1.empty() and q2.get_nowait() == {"n": 2} and b.n_clients == 1
     asyncio.run(run())
+
+
+def test_timed_out_of_order_points_preserve_message_order():
+    tracker = PointTracker()
+    tracker.new_points(pts((0, 0, 0, 10)), ts(10))
+    new = tracker.new_points(
+        pts((1, 0, 0, 13), (2, 0, 0, 9), (3, 0, 0, 11)), ts(13, 9, 11)
+    )
+    assert new.tolist() == [[1, 0, 0, 13], [3, 0, 0, 11]]
+    assert tracker.last_t == 13
+    assert len(tracker.new_points(pts((4, 0, 0, 12)), ts(12))) == 0
+    assert tracker.last_t == 13
+
+
+def test_empty_timed_message_does_not_forget_previous_readings():
+    tracker = PointTracker()
+    reading = pts((1, 2, 0, 42))
+    tracker.new_points(reading, ts(5))
+    assert tracker.new_points(pts(), ts()).shape == (0, 4)
+    assert tracker.last_t == 5
+    assert len(tracker.new_points(reading, ts(5))) == 0
+    assert tracker.new_points(reading, ts(6)).tolist() == reading.tolist()
+
+
+def test_tracker_reset_accepts_older_timestamps_and_legacy_points():
+    tracker = PointTracker()
+    reading = pts((1, 2, 0, 42))
+    tracker.new_points(reading)
+    tracker.new_points(reading, ts(100))
+    tracker.reset()
+    assert tracker.new_points(reading, ts(1)).tolist() == reading.tolist()
+    assert tracker.new_points(reading).tolist() == reading.tolist()
+
+
+def test_session_switch_clears_sensor_but_preserves_map_and_bridge():
+    state = LiveState("old")
+    grid = MapGrid(datetime(2026, 1, 1, tzinfo=timezone.utc), 1, 1, 1, 0, 0,
+                   np.zeros((1, 1), dtype=np.int8))
+    saved_map = state.set_map(grid, b"png")
+    state.bridge_connected = True
+    state.sensor = {"voc": 42, "warmed_up": True}
+    state.push_voc(42, grid.ts)
+    state.new_session("new")
+    hello = state.hello_event(250)
+    assert hello["session"] == "new"
+    assert hello["sensor"] is None
+    assert hello["voc_window"] == []
+    assert state.voc_ts is None
+    assert state.map is saved_map
+    assert hello["bridge_connected"] is True
+
+
+def test_voc_window_retains_exact_cutoff_and_expires_after_it(monkeypatch):
+    state = LiveState("test", voc_window_seconds=60)
+    clock = [1000.0]
+    monkeypatch.setattr(time, "time", lambda: clock[0])
+    stamp = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    state.push_voc(10, stamp)
+    clock[0] = 1060.0
+    state.push_voc(20, stamp)
+    assert list(state.voc_window) == [(1000.0, 10), (1060.0, 20)]
+    clock[0] = 1060.001
+    state.push_voc(30, stamp)
+    assert [value for _, value in state.voc_window] == [20, 30]
+    assert state.voc == 30 and state.voc_ts == stamp
+
+
+def test_slow_subscriber_does_not_drop_fast_subscriber_events():
+    async def run():
+        bus = Broadcaster(maxsize=2)
+        slow, fast = bus.subscribe(), bus.subscribe()
+        for i in range(5):
+            bus.publish({"i": i})
+            assert fast.get_nowait() == {"i": i}
+        assert [slow.get_nowait(), slow.get_nowait()] == [{"i": 3}, {"i": 4}]
+        assert fast.empty()
+    asyncio.run(run())
