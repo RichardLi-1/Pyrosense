@@ -9,9 +9,11 @@ DIR=${DIR:-super-fire-project}
 cd "$(dirname "$0")/.."
 what=${1:-all}
 
+BRANCH=$(git branch --show-current)
 if [[ $what == all || $what == api ]]; then
-  git push origin main 2>&1 | grep -vE "moved|new location|^remote:\s*$" || true
-  ssh "$VM" "cd ~/$DIR && git pull -q --ff-only && docker compose up -d --build api 2>&1 | tail -1"
+  # The VM tracks whatever branch is checked out here, so a feature branch can be deployed as-is.
+  git push -u origin "$BRANCH" 2>&1 | grep -vE "moved|new location|^remote:\s*$|^branch|^To |up to date" || true
+  ssh "$VM" "cd ~/$DIR && git fetch -q origin && git checkout -q $BRANCH 2>/dev/null || git checkout -q -b $BRANCH origin/$BRANCH; git reset -q --hard origin/$BRANCH && echo VM on \$(git branch --show-current) \$(git rev-parse --short HEAD) && docker compose up -d --build api 2>&1 | tail -1"
 fi
 if [[ $what == all || $what == dashboard ]]; then
   (cd dashboard && npm run build 2>&1 | grep -E "built in|error" )

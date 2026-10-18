@@ -2,17 +2,22 @@
 // voice is on. Browsers only allow sound after a click, so the voice toggle is also the unlock.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { LEVEL_LABEL, SCALE, type Level } from '../lib/colors'
+import { apiUrl } from '../lib/live'
 import type { Warning } from '../lib/types'
 
 const VOICE_KEY = 'voice'
 const asLevel = (l: Warning['level']): Level => (l === 'hazardous' ? 'alert' : l)
 const clock = (iso: string) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
 
-/** Play one warning: its audio file when there is one, else the browser's speech. */
+/** Play one warning: its audio file when there is one (through the /api proxy), else the browser's speech. A warning is never silent. */
 function speak(w: Warning) {
   if (w.audio_url) {
-    const a = new Audio(w.audio_url)
-    a.play().catch(() => fallback(w.text))
+    const a = new Audio(apiUrl(w.audio_url))
+    let spoken = false
+    const voice = () => { if (!spoken) { spoken = true; fallback(w.text) } }
+    a.onerror = voice // 404, wrong type (an HTML page), decode failure
+    a.onstalled = voice
+    a.play().catch(voice)
     return
   }
   fallback(w.text)
