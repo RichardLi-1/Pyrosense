@@ -12,7 +12,7 @@ import type { Source } from '../lib/sourceModel'
 import { chooseNext, type NextSample } from '../lib/nextSample'
 import { DEFAULT_WEARER, type MapMeta } from '../lib/types'
 import { drawHardHat } from './theme'
-import { TRAIL_S, crewColor, insets, type RendererProps } from './types'
+import { TRAIL_S, crewColor, growBox, insets, type RendererProps, knownBounds, type Box } from './types'
 
 const WALL_OVERHEAD = 0.9 // m: cut-away height so rooms stay visible from above
 const WALL_FULL = 2.6 // m: in first person
@@ -103,6 +103,7 @@ type Api = {
 export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
   const hostRef = useRef<HTMLDivElement>(null)
   const p = useRef(props)
+  const known = useRef<Box | null>(null) // what has been mapped so far, for the default view
   p.current = props
   const api = useRef<Api | null>(null)
 
@@ -225,11 +226,13 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       const m = p.current.meta
       if (!m) return null
       const ins = insets(p.current.inset)
-      const mw = m.w * m.res, mh = m.h * m.res
-      const target = new THREE.Vector3(m.origin[0] + mw / 2, 0, -(m.origin[1] + mh / 2))
+      const b = growBox(known.current ?? { x0: m.origin[0], y0: m.origin[1], x1: m.origin[0] + m.w * m.res, y1: m.origin[1] + m.h * m.res },
+                        p.current.poses.map(({ pose }) => pose))
+      const mw = Math.max(1, b.x1 - b.x0), mh = Math.max(1, b.y1 - b.y0)
+      const target = new THREE.Vector3((b.x0 + b.x1) / 2, 0, -(b.y0 + b.y1) / 2)
       const aw = Math.max(50, size.w - ins.left - ins.right), ah = Math.max(50, size.h - ins.top - ins.bottom)
       const tv = Math.tan((FOV_OVERHEAD * Math.PI) / 360) * (ah / size.h), th = tv * (aw / ah)
-      const dist = ((0.5 * Math.hypot(mw, mh)) / Math.min(tv, th)) * 0.92
+      const dist = ((0.5 * Math.hypot(mw, mh)) / Math.min(tv, th)) * 0.9
       const dir = new THREE.Vector3(0, Math.sin(0.87), Math.cos(0.87))
       return { target, pos: target.clone().add(dir.multiplyScalar(dist)) }
     }
@@ -494,6 +497,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     g.drawImage(image, 0, 0)
     const data = g.getImageData(0, 0, meta.w, meta.h).data
     pixels.current = data
+    known.current = knownBounds((i) => data[i * 4 + 3], meta)
     api.current.setWalls(wallRects((i) => data[i * 4 + 3], meta.w, meta.h), meta)
   }, [image, meta])
 

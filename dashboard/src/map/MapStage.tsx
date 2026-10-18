@@ -1,8 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
-import { RAMP_BANDS, SCALE, levelRanges, rampGradient } from '../lib/colors'
+import { RAMP_BANDS, SCALE, levelRanges, rampGradient, rampT } from '../lib/colors'
 import { HORIZONS } from '../lib/forecast'
 import MapView from './MapView'
-import { insets, type MapProps } from './types'
+import type { MapProps } from './types'
 
 const Map3D = lazy(() => import('./Map3D'))
 
@@ -50,13 +50,13 @@ export default function MapStage(props: MapProps & { legend?: boolean }) {
   const [horizon, setHorizon] = useState<number | null>(null)
   const gas = props.showHeat ? props.gas ?? null : null
   const model = gas?.source ?? null
-  const ins = insets(props.inset)
   const r = { ...props, recenter, onMoved, model, gas, horizon: mode === '2d' ? horizon : null }
   return (
     <>
       {mode === '2d' ? <MapView {...r} /> : <Suspense fallback={null}><Map3D {...r} firstPerson={mode === 'fp'} /></Suspense>}
 
-      <div className="map-ctrl" style={{ right: ins.right + 16, bottom: ins.bottom + 16 }}>
+      <div className="map-bar" style={{ left: 28, right: 28, bottom: 0 }}>
+        <div className="map-ctrl">
         {moved && (!props.follow || mode === 'fp') && (
           <button className="map-btn recenter" onClick={doRecenter} title="Recenter (C)">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
@@ -80,22 +80,25 @@ export default function MapStage(props: MapProps & { legend?: boolean }) {
                     title="Switch view (V)">{label}</button>
           ))}
         </div>
-      </div>
-
-      {props.legend !== false && (
-        <div className="legend" style={{ left: ins.left + 16, bottom: ins.bottom + 16 }} title={SCALE.label}>
-          <div className="legend-ramp" style={{ background: rampGradient() }}>
-            {RAMP_BANDS.slice(1).map((t) => <i key={t} style={{ left: `${t * 100}%` }} />)}
-          </div>
-          <div className="legend-bands">
-            {LEGEND.map((l, i) => {
-              const w = ((RAMP_BANDS[i + 1] ?? 1) - RAMP_BANDS[i]) * 100
-              return <span key={l.key} style={{ width: `${w}%` }} title={`${SCALE.label} ${levelRanges()[l.key]}`}>{l.label}</span>
-            })}
-          </div>
-          <span className="legend-note">{mode === '2d' ? 'Striped = predicted · dotted ring = sample next' : 'Faint floor & gas cloud = predicted · dotted ring = sample next'}</span>
         </div>
-      )}
+        {props.legend !== false && (
+          <div className="legend-scale" title={SCALE.label}>
+            {props.voc != null && (
+              <div className="legend-marker" style={{ left: `${rampT(props.voc) * 100}%` }}>
+                <span className="mono">{props.voc.toFixed(0)}</span>
+              </div>
+            )}
+            <div className="legend-ramp" style={{ background: rampGradient() }}>
+              {RAMP_BANDS.slice(1).map((t) => <i key={t} style={{ left: `${t * 100}%` }} />)}
+            </div>
+            <div className="legend-bands">
+              {LEGEND.map((l, i) => (
+                <span key={l.key} style={{ left: `${RAMP_BANDS[i] * 100}%` }} title={`${SCALE.label} ${levelRanges()[l.key]}`}>{l.label}</span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </>
   )
 }

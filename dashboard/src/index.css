@@ -116,7 +116,7 @@ a.brand { color: inherit; text-decoration: none; cursor: pointer; pointer-events
 .f-reading .sparkline { display: block; margin: 0; }
 .f-reading .attitude { margin-top: -2px; }
 .f-reading .reading-label { font-size: 15px; }
-.f-bottom { position: absolute; left: 28px; right: 28px; bottom: 18px; }
+.f-bottom { position: absolute; left: 28px; right: 28px; bottom: 64px; }
 
 /* ---- Paper: light, editorial column + map card ---------------------------- */
 .t-paper {
@@ -158,7 +158,9 @@ a.brand { color: inherit; text-decoration: none; cursor: pointer; pointer-events
 
 /* ---- map controls + legend (all designs) ---------------------------------- */
 .map-3d { position: absolute; inset: 0; }
-.map-ctrl { position: absolute; z-index: 4; display: flex; gap: 10px; align-items: center; }
+/* one row along the bottom edge: controls on the left, the colour scale filling the rest */
+.map-bar { position: absolute; z-index: 4; display: flex; align-items: center; gap: 28px; height: 64px; padding: 0; }
+.map-ctrl { display: flex; gap: 10px; align-items: center; flex: none; }
 .map-btn, .map-seg {
   height: 40px; border-radius: 999px; background: var(--pop); border: 1px solid var(--line);
   box-shadow: 0 4px 16px rgba(0,0,0,.18);
@@ -168,17 +170,16 @@ a.brand { color: inherit; text-decoration: none; cursor: pointer; pointer-events
 .map-seg { display: inline-flex; padding: 3px; }
 .map-seg button { font-size: 14px; font-weight: 600; letter-spacing: .01em; padding: 0 16px; border-radius: 999px; color: var(--muted); }
 .map-seg button.on { background: var(--text); color: var(--bg); }
-.legend {
-  position: absolute; z-index: 4; display: flex; flex-direction: column; gap: 5px; width: 332px; font-size: 11px; color: var(--muted);
-  padding: 10px 14px 9px; border-radius: 12px; background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(8px);
-  border: 1px solid var(--line);
-}
+.legend-scale { position: relative; flex: 1; min-width: 0; font-size: 11px; color: var(--muted); padding-top: 18px; }
+/* the current reading, gliding along the scale */
+.legend-marker { position: absolute; top: 0; bottom: 20px; width: 0; transition: left .3s ease-out; pointer-events: none; }
+.legend-marker::after { content: ''; position: absolute; left: -1px; top: 16px; bottom: 0; width: 2px; border-radius: 1px; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.45); }
+.legend-marker span { position: absolute; top: 0; left: 0; transform: translateX(-50%); font-size: 12px; line-height: 1; color: var(--text); white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .legend-marker { transition: none; } }
 .legend-ramp { position: relative; height: 8px; border-radius: 4px; overflow: hidden; }
 .legend-ramp i { position: absolute; top: 0; bottom: 0; width: 1px; background: color-mix(in srgb, var(--bg) 45%, transparent); }
-.legend-bands { display: flex; }
-.legend-bands span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 6px; }
-.legend-bands span:last-child { text-align: right; }
-.legend-note { margin-top: 3px; padding-top: 6px; border-top: 1px solid var(--line); opacity: .8; }
+.legend-bands { position: relative; height: 15px; margin-top: 5px; }
+.legend-bands span { position: absolute; top: 0; white-space: nowrap; }
 
 /* ---- crew + attitude ----------------------------------------------------- */
 .attitude { font-size: 11px; color: var(--muted); opacity: .8; letter-spacing: .01em; white-space: nowrap; }

@@ -14,7 +14,7 @@ export default function Focus({ s, setUntil, view, select, setSource, gas }: Des
   return (
     <div className="design d-focus">
       <MapStage theme={THEMES.focus} meta={s.meta} image={s.image} heat={s.heat} trail={s.trail} pose={s.pose} poses={s.poses} selected={s.selected!}
-               alerts={s.alerts} threshold={s.threshold} {...view} gas={gas} inset={{ left: 390, top: 40, bottom: playback ? 70 : 20 }} />
+               alerts={s.alerts} threshold={s.threshold} voc={s.voc} {...view} gas={gas} inset={{ left: 390, top: 88, bottom: playback ? 124 : 72 }} />
       <Waiting s={s} />
       <header className="f-top">
         <a className="brand" href="/landing/" title="About this project"><Logo height={60} /></a>

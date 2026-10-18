@@ -5,7 +5,7 @@ import { predict, predictedOnly } from '../lib/predict'
 import { chooseNext } from '../lib/nextSample'
 import { DEFAULT_WEARER } from '../lib/types'
 import { drawHardHat } from './theme'
-import { TRAIL_S, crewColor, insets, type RendererProps } from './types'
+import { TRAIL_S, crewColor, growBox, insets, knownBounds, type Box, type RendererProps } from './types'
 
 type Camera = { cx: number; cy: number; scale: number } // metres, px per metre
 
@@ -30,6 +30,7 @@ export default function MapView(props: RendererProps) {
   // Re-render the occupancy grid in theme colours whenever the map or theme changes.
   const occ = useRef<HTMLCanvasElement | null>(null)
   const free = useRef<HTMLCanvasElement | null>(null) // scanned free space, to clip heat at walls
+  const known = useRef<Box | null>(null) // what has been mapped so far, for the default camera
   const { image, meta, theme, heat: cells, recenter, onMoved, model, gas, horizon } = props
   useEffect(() => {
     if (!image || !meta) return
@@ -39,6 +40,7 @@ export default function MapView(props: RendererProps) {
     g.drawImage(image, 0, 0)
     const px = g.getImageData(0, 0, meta.w, meta.h)
     const d = px.data
+    known.current = knownBounds((i) => d[i * 4 + 3], meta)
     const mask = new ImageData(meta.w, meta.h)
     for (let i = 0; i < d.length; i += 4) {
       const a = d[i + 3]
@@ -146,16 +148,22 @@ export default function MapView(props: RendererProps) {
       return { w: r.width, h: r.height, dpr }
     }
 
+    // default camera: frame what has been mapped (not the whole, mostly-unknown grid),
+    // centred in the area the overlaid UI leaves clear; re-evaluated every frame so it
+    // eases outward as the map grows
     const fit = (w: number, h: number): Camera | null => {
       const m = p.current.meta
       if (!m) return null
+      const b = growBox(known.current ?? { x0: m.origin[0], y0: m.origin[1], x1: m.origin[0] + m.w * m.res, y1: m.origin[1] + m.h * m.res },
+                        p.current.poses.map(({ pose }) => pose))
       const ins = insets(p.current.inset)
       const aw = Math.max(50, w - ins.left - ins.right), ah = Math.max(50, h - ins.top - ins.bottom)
-      const mw = m.w * m.res, mh = m.h * m.res
-      const scale = Math.min(aw / mw, ah / mh) * 0.9
-      // centre of the map, shifted so it sits in the un-inset area
-      return { cx: m.origin[0] + mw / 2 - (ins.left - ins.right) / 2 / scale,
-               cy: m.origin[1] + mh / 2 + (ins.top - ins.bottom) / 2 / scale, scale }
+      const bw = Math.max(1, b.x1 - b.x0), bh = Math.max(1, b.y1 - b.y0)
+      // fill 95% of the clear area; a first tiny scan still gets at least 60% of its height, capped at 400 px/m
+      const scale = Math.min(400, Math.max(Math.min(aw / bw, ah / bh) * 0.95, Math.min(aw / bw, (0.6 * ah) / bh)))
+      // left edge of the mapped area sits just right of the rail; vertically centred in the clear area
+      return { cx: b.x0 - (ins.left + 0.025 * aw - w / 2) / scale,
+               cy: (b.y0 + b.y1) / 2 + (ins.top - ins.bottom) / 2 / scale, scale }
     }
 
     const frame = (now: number) => {
