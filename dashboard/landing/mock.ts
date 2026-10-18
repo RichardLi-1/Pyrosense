@@ -1,8 +1,8 @@
 // A crisp miniature of the real PyroSense dashboard (Focus design): full-bleed dark map with
-// the floor plan centred, thermal ramp heat as crisp bands with contour lines, striped
-// predicted areas with "likely source" / "sample next" rings, thin per-firefighter trails,
-// hard-hat badges A/B/C; a left column with the big TVOC reading, level, sparkline, attitude,
-// exposure rows and crew chips; legend pill, view segment control and a live timeline.
+// the floor plan centred, the thermal ramp as crisp bands with contour lines, thin
+// per-responder trails, hard-hat badges A/B/C with heading arrows and the commander's marks;
+// a left column with the big TVOC reading, level, sparkline, position, sensor tiles and the
+// responder selector; the Mark toolbar on the right; Layers · Follow · view switch · scale below.
 import { clamp, lerp } from './util'
 
 type Pt = [number, number]
@@ -12,14 +12,14 @@ const tri = (v: number) => 1 - Math.abs(frac(v) * 2 - 1)
 
 // ---- scale + thermal ramp (mirrors src/lib/colors.ts, SGP30 ppb) ----------------------
 export const BANDS: [number, number, number] = [220, 660, 2200]
-export const MAX_PPB = 3000
+const RAMP_MAX = 1.3 * BANDS[2] // readings beyond this are all the same red
 const STOPS: [number, RGB][] = [
-  [0.0, [10, 16, 48]], [0.16, [24, 50, 128]], [0.33, [47, 111, 224]], [0.46, [146, 188, 236]],
-  [0.55, [240, 170, 74]], [0.67, [226, 84, 32]], [0.78, [255, 138, 31]], [0.9, [255, 210, 60]], [1.0, [255, 247, 216]],
+  [0.00, [10, 16, 48]], [0.16, [27, 58, 153]], [0.32, [47, 181, 200]], [0.34, [255, 214, 64]], [0.55, [245, 176, 0]],
+  [0.57, [255, 138, 31]], [0.78, [230, 83, 31]], [0.80, [224, 36, 36]], [1.00, [255, 64, 64]],
 ]
 const SEG = [0, 0.33, 0.55, 0.78]
 export function rampT(v: number): number {
-  const edges = [0, ...BANDS, MAX_PPB], stops = [...SEG, 1]
+  const edges = [0, ...BANDS, RAMP_MAX], stops = [...SEG, 1]
   if (v <= 0) return 0
   for (let i = 0; i < 4; i++) if (v < edges[i + 1]) return stops[i] + ((v - edges[i]) / (edges[i + 1] - edges[i])) * (stops[i + 1] - stops[i])
   return 1
@@ -28,7 +28,7 @@ export function rampColor(t: number): RGB {
   const x = clamp(t)
   for (let i = 1; i < STOPS.length; i++) {
     const [b, cb] = STOPS[i], [a, ca] = STOPS[i - 1]
-    if (x <= b) { const f = (x - a) / (b - a); return [0, 1, 2].map((k) => Math.round(ca[k] + (cb[k] - ca[k]) * f)) as RGB }
+    if (x <= b) { const f = b === a ? 0 : (x - a) / (b - a); return [0, 1, 2].map((k) => Math.round(ca[k] + (cb[k] - ca[k]) * f)) as RGB }
   }
   return STOPS[STOPS.length - 1][1]
 }
@@ -47,10 +47,14 @@ const WALLS: Pt[][] = [
   [[2, 38], [12, 38]], [[18, 38], [30, 38]], [[36, 38], [48, 38]], [[54, 38], [70, 38]], [[76, 38], [98, 38]],
   [[20, 38], [20, 62]], [[40, 38], [40, 62]], [[58, 38], [58, 62]],
 ]
-const UNEXPLORED: Pt[][] = [[[80, 38], [80, 62]]]
-const PREDICTED_ROOM = [80, 38, 98, 62] // x0 y0 x1 y1
-const SAMPLE_NEXT: Pt = [62, 14]
-const SOURCE: Pt = [89, 51]
+const HOT: Pt = [89, 51] // where the gas is
+/** Commander's marks (glyph paths from src/lib/marks.ts, 24×24). */
+const MARKS = [
+  { at: [14, 13] as Pt, label: 'Victim', color: '#4f8cff',
+    d: 'M12 2.5a3.75 3.75 0 1 1 0 7.5a3.75 3.75 0 0 1 0-7.5Z M4.5 20.2c0-4.2 3.3-7.2 7.5-7.2s7.5 3 7.5 7.2c0 .7-.6 1.3-1.3 1.3H5.8c-.7 0-1.3-.6-1.3-1.3Z' },
+  { at: [92, 44] as Pt, label: 'Fire', color: '#ef233c',
+    d: 'M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5Z' },
+]
 const CREW = [
   { color: '#ffffff', letter: 'A', r: 2.6, path: [[22, 32], [62, 32], [64, 36], [66, 44], [69, 52]] as Pt[], period: 26 },
   { color: '#7dd3fc', letter: 'B', r: 1.8, path: [[8, 33], [50, 33]] as Pt[], period: 30, pingpong: true },
@@ -86,11 +90,10 @@ function polyPrefix(pts: Pt[], u: number): Pt[] {
 function field(x: number, y: number) {
   const g = (cx: number, cy: number, s: number, a: number) => a * Math.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * s * s))
   let f = 0.07
-  f += 0.26 * Math.exp(-((y - 32) ** 2) / 50) * (x > 6 && x < 94 ? 1 : 0.4)
-  f += g(14, 14, 6, 0.24)
-  f += g(SAMPLE_NEXT[0], SAMPLE_NEXT[1], 5, 0.34)
-  f += g(69, 50, 7, 0.4)
-  f += g(SOURCE[0], SOURCE[1], 4.5, 0.95) + g(SOURCE[0], SOURCE[1], 9, 0.25)
+  f += 0.19 * Math.exp(-((y - 32) ** 2) / 50) * (x > 6 && x < 94 ? 1 : 0.4)
+  f += g(14, 14, 6, 0.2)
+  f += g(69, 50, 7, 0.36)
+  f += g(HOT[0], HOT[1], 4.5, 0.95) + g(HOT[0], HOT[1], 9, 0.25)
   return f
 }
 
@@ -113,10 +116,9 @@ export class Mock {
   private spark: HTMLCanvasElement
   private voc: HTMLElement
   private level: HTMLElement
-  private now: HTMLElement
   private heat: HTMLCanvasElement | null = null
   private lastVoc = ''
-  private lastNow = ''
+  private marks = MARKS.map((m) => ({ ...m, path: new Path2D(m.d) }))
 
   constructor(root: HTMLElement) {
     this.root = root
@@ -124,11 +126,10 @@ export class Mock {
     this.spark = root.querySelector('#dashSpark')!
     this.voc = root.querySelector('#dashVoc')!
     this.level = root.querySelector('#dashLevel')!
-    this.now = root.querySelector('#dashNow')!
     root.querySelector<HTMLElement>('.dash-ramp')!.style.background = rampGradient()
     const lv = rgb(rampColor(rampT(2410)))
     this.level.style.setProperty('--lv', lv)
-    root.querySelectorAll<HTMLElement>('.dash-crew span').forEach((chip, i) => {
+    root.querySelectorAll<HTMLElement>('.dash-crew span:not(.all)').forEach((chip, i) => {
       chip.style.setProperty('--c', CREW[i].color)
       chip.querySelector('em')!.textContent = String(CREW_VALUES[i])
     })
@@ -151,16 +152,13 @@ export class Mock {
     const tt = reduced ? 3 : t
     this.drawMap(tt)
     this.drawSpark(tt)
-    const secs = 32 + Math.floor(tt)
-    const nowText = `14:${String(9 + Math.floor(secs / 60)).padStart(2, '0')}:${String(secs % 60).padStart(2, '0')}`
-    if (nowText !== this.lastNow) { this.now.textContent = nowText; this.lastNow = nowText }
     const v = String(Math.round(2410 + 9 * Math.sin(Math.floor(tt * 1.4) * 1.7)))
     if (v !== this.lastVoc) { this.voc.textContent = v; this.lastVoc = v }
   }
 
-  /** Plan rect inside the map canvas (device px): to the right of the left column. */
+  /** Plan rect inside the map canvas (device px): between the left column and the Mark toolbar. */
   private planRect(W: number, H: number) {
-    const bx = W * 0.3, by = H * 0.12, bw = W * 0.675, bh = H * 0.7
+    const bx = W * 0.29, by = H * 0.1, bw = W * 0.54, bh = H * 0.76
     const s = Math.min(bw / 100, bh / 64)
     return { s, ox: bx + (bw - 100 * s) / 2, oy: by + (bh - 64 * s) / 2 }
   }
@@ -175,19 +173,13 @@ export class Mock {
     const N = 12
     const band = new Uint8Array(pw * ph)
     for (let j = 0; j < ph; j++) for (let i = 0; i < pw; i++) band[j * pw + i] = Math.min(N - 1, Math.floor(clamp(field((i / pw) * 100, (j / ph) * 64)) * N))
-    const px = (pw / 100)
-    const inPredicted = (x: number, y: number) =>
-      (x >= PREDICTED_ROOM[0] && x <= PREDICTED_ROOM[2] && y >= PREDICTED_ROOM[1] && y <= PREDICTED_ROOM[3]) ||
-      Math.hypot(x - SAMPLE_NEXT[0], y - SAMPLE_NEXT[1]) < 7
     for (let j = 0; j < ph; j++) {
       for (let i = 0; i < pw; i++) {
         const k = j * pw + i
         const b = band[k]
         const col = rampColor((b + 0.5) / N)
         const contour = (i > 0 && band[k - 1] !== b) || (j > 0 && band[k - pw] !== b)
-        const x = (i / pw) * 100, y = (j / ph) * 64
-        let a = 0.92
-        if (inPredicted(x, y) && Math.floor((i + j) / (3 * px)) % 2 === 0) a = 0.3
+        const a = 0.92
         const o = k * 4
         if (contour) { img.data[o] = 230; img.data[o + 1] = 236; img.data[o + 2] = 246; img.data[o + 3] = 150 }
         else { img.data[o] = col[0]; img.data[o + 1] = col[1]; img.data[o + 2] = col[2]; img.data[o + 3] = Math.round(a * 255) }
@@ -217,26 +209,24 @@ export class Mock {
     // walls
     ctx.strokeStyle = 'rgba(232,236,244,0.96)'; ctx.lineWidth = Math.max(1.2, s * 0.75)
     for (const w of WALLS) { ctx.beginPath(); ctx.moveTo(X(w[0][0]), Y(w[0][1])); for (const p of w.slice(1)) ctx.lineTo(X(p[0]), Y(p[1])); ctx.stroke() }
-    ctx.strokeStyle = 'rgba(232,236,244,0.35)'; ctx.setLineDash([2.2 * s, 2.2 * s])
-    for (const w of UNEXPLORED) { ctx.beginPath(); ctx.moveTo(X(w[0][0]), Y(w[0][1])); for (const p of w.slice(1)) ctx.lineTo(X(p[0]), Y(p[1])); ctx.stroke() }
-    ctx.setLineDash([])
 
-    // sample-next (dotted teal) and likely-source (dashed red) rings with labels
-    const fs = Math.max(6, 1.9 * s)
-    ctx.font = `500 ${fs}px Inter, system-ui, sans-serif`
-    ctx.textAlign = 'center'
-    ctx.strokeStyle = '#5eead4'; ctx.lineWidth = Math.max(1, s * 0.4); ctx.setLineDash([s * 0.6, s * 1.2])
-    ctx.beginPath(); ctx.arc(X(SAMPLE_NEXT[0]), Y(SAMPLE_NEXT[1]), 4.2 * s, 0, Math.PI * 2); ctx.stroke()
-    ctx.setLineDash([])
-    ctx.beginPath(); ctx.moveTo(X(SAMPLE_NEXT[0]) - 1.2 * s, Y(SAMPLE_NEXT[1])); ctx.lineTo(X(SAMPLE_NEXT[0]) + 1.2 * s, Y(SAMPLE_NEXT[1]))
-    ctx.moveTo(X(SAMPLE_NEXT[0]), Y(SAMPLE_NEXT[1]) - 1.2 * s); ctx.lineTo(X(SAMPLE_NEXT[0]), Y(SAMPLE_NEXT[1]) + 1.2 * s); ctx.stroke()
-    ctx.fillStyle = '#5eead4'
-    ctx.fillText('sample next', X(SAMPLE_NEXT[0]), Y(SAMPLE_NEXT[1]) - 5.6 * s)
-    ctx.strokeStyle = '#ff4d5e'; ctx.setLineDash([s * 1.4, s * 1.0])
-    ctx.beginPath(); ctx.arc(X(SOURCE[0]), Y(SOURCE[1]), (4.6 + 0.3 * Math.sin(t * 2)) * s, 0, Math.PI * 2); ctx.stroke()
-    ctx.setLineDash([])
-    ctx.fillStyle = '#ff4d5e'
-    ctx.fillText('likely source', X(SOURCE[0]), Y(SOURCE[1]) - 6.6 * s)
+    // commander's marks: dark disc, coloured ring, glyph, label
+    const fs = Math.max(6, 1.7 * s)
+    for (const m of this.marks) {
+      const x = X(m.at[0]), y = Y(m.at[1]), r = 2.3 * s
+      ctx.fillStyle = '#0b0e14'
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill()
+      ctx.strokeStyle = m.color; ctx.lineWidth = Math.max(1, s * 0.35); ctx.stroke()
+      ctx.save()
+      const k = (r * 1.2) / 24
+      ctx.translate(x - 12 * k, y - 12 * k); ctx.scale(k, k)
+      ctx.fillStyle = m.color; ctx.fill(m.path, 'evenodd')
+      ctx.restore()
+      ctx.font = `600 ${fs}px Inter, system-ui, sans-serif`
+      ctx.textAlign = 'center'
+      ctx.fillStyle = 'rgba(238,241,246,0.92)'
+      ctx.fillText(m.label, x, y + r + fs * 1.1)
+    }
 
     // trails + badges
     CREW.forEach((f, i) => {
@@ -251,6 +241,16 @@ export class Mock {
       const raw = t / f.period + i * 0.37
       const u = f.pingpong ? tri(raw) : frac(raw)
       const [px, py] = polyPoint(f.path, u)
+      // heading arrow along the direction of travel
+      const dir = f.pingpong && frac(raw) >= 0.5 ? -1 : 1
+      const [qx, qy] = polyPoint(f.path, clamp(u + dir * 0.01))
+      const ang = Math.atan2(qy - py, qx - px) || 0
+      const L = (f.r + 3.4) * s, ex = X(px) + Math.cos(ang) * L, ey = Y(py) + Math.sin(ang) * L
+      ctx.strokeStyle = f.color; ctx.fillStyle = f.color; ctx.lineWidth = Math.max(1, s * 0.3)
+      ctx.beginPath(); ctx.moveTo(X(px) + Math.cos(ang) * f.r * s, Y(py) + Math.sin(ang) * f.r * s); ctx.lineTo(ex, ey); ctx.stroke()
+      const hd = 0.9 * s
+      ctx.beginPath(); ctx.moveTo(ex + Math.cos(ang) * hd, ey + Math.sin(ang) * hd)
+      ctx.lineTo(ex + Math.cos(ang + 2.4) * hd, ey + Math.sin(ang + 2.4) * hd); ctx.lineTo(ex + Math.cos(ang - 2.4) * hd, ey + Math.sin(ang - 2.4) * hd); ctx.closePath(); ctx.fill()
       ctx.fillStyle = 'rgba(255,255,255,0.14)'
       ctx.beginPath(); ctx.arc(X(px), Y(py), f.r * 1.7 * s, 0, Math.PI * 2); ctx.fill()
       drawHardHat(ctx, X(px), Y(py), f.r * s, f.color, '#0b0e14')

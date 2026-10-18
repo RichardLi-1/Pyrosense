@@ -148,6 +148,8 @@ export class Helmet {
     if (this.rig.parent === this.scene) return
     this.scene.add(this.rig)
     this.rig.remove(this.worldLights)
+    // undo everything the world placed on it (position too, or the hat stays off-camera)
+    this.rig.position.set(0, 0, 0)
     this.rig.scale.setScalar(1)
     this.rig.rotation.set(0.08, 0, 0)
   }

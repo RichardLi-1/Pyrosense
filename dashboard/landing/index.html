@@ -82,27 +82,41 @@
             <div class="dash-top">
               <span class="dash-brand">PyroSense</span>
               <span class="dash-status"><i></i>Live</span>
-              <span class="dash-summary">Summary</span>
+              <span class="dash-pill">Exposure</span>
+              <span class="dash-pill">Playback</span>
+              <span class="dash-pill">Scans</span>
             </div>
             <aside class="dash-left">
               <span class="dash-k">TVOC · ppb</span>
-              <span class="dash-value"><span class="mono" id="dashVoc">2410</span><em>ppb</em></span>
+              <span class="dash-value"><span class="mono" id="dashVoc">2410</span></span>
               <span class="dash-level" id="dashLevel"><i></i>Hazardous</span>
               <canvas id="dashSpark" aria-hidden="true"></canvas>
-              <span class="dash-att mono">R 0° · P -1° · Y 18°</span>
-              <div class="dash-rows mono"><span>Exposure</span><b>9 420 <i>ppb·min</i></b><span>Projected</span><b>2 600 <i>in 5 min</i></b><span>Sample next</span><b class="next">14 m N</b></div>
-              <div class="dash-crew"><span class="on"><i></i>A <em>2410</em></span><span><i></i>B <em>640</em></span><span><i></i>C <em>180</em></span></div>
+              <span class="dash-att mono">X 18.4 m · Y 6.2 m · 112°</span>
+              <div class="dash-tiles">
+                <span><small>eCO₂ · ppm</small><b class="mono">1840</b></span>
+                <span><small>Raw H₂</small><b class="mono">12945</b></span>
+                <span><small>Raw EtOH</small><b class="mono">18243</b></span>
+                <span><small>Exposure · ppb·min</small><b class="mono">9420</b></span>
+              </div>
+              <div class="dash-crew"><span class="all on">All</span><span class="sel"><i></i>A <em>2410</em></span><span><i></i>B <em>640</em></span><span><i></i>C <em>180</em></span></div>
             </aside>
-            <div class="dash-legend">
-              <i class="dash-ramp"></i>
-              <div class="dash-legend-l"><span>Good</span><span>Moderate</span><span>Poor</span><span>Hazardous</span></div>
-              <small>Striped = predicted · dotted ring = sample next</small>
+            <div class="dash-marks" aria-hidden="true">
+              <small>Mark</small>
+              <span><i style="--m:#4f8cff"></i>Victim</span>
+              <span><i style="--m:#ef233c"></i>Fire</span>
+              <span><i style="--m:#ef233c"></i>Blocked exit</span>
+              <span><i style="--m:#1dd3b0"></i>Exit</span>
+              <span><i style="--m:#93c5fd"></i>Stairs</span>
+              <span><i style="--m:#ffd166"></i>Hazard</span>
             </div>
-            <div class="dash-horizon"><span class="on">Now</span><span>+1 min</span><span>+2 min</span><span>+5 min</span></div>
-            <div class="dash-seg"><span class="on">2D</span><span>3D</span><span>First person</span></div>
-            <div class="dash-timeline">
-              <div class="dash-track"><b class="dash-handle"></b></div>
-              <div class="dash-times mono"><span id="dashNow">14:09:32</span><span>Live</span></div>
+            <div class="dash-bar">
+              <span class="dash-pill">Layers</span>
+              <span class="dash-pill">Follow A</span>
+              <div class="dash-seg"><span class="on">2D</span><span>3D</span><span>First person</span></div>
+              <div class="dash-legend">
+                <i class="dash-ramp"></i>
+                <div class="dash-legend-l"><span>Good</span><span>Moderate</span><span>Poor</span><span>Hazardous</span></div>
+              </div>
             </div>
           </div>
         </div>

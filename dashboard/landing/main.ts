@@ -237,6 +237,7 @@ function render(p: number, t: number, dt: number) {
       const v = calloutVis[i] * productA
       if (v < 0.02 || !calloutRects[i]) continue
       helmet.project(i, ndc)
+      if (Math.abs(ndc.x) > 1 || Math.abs(ndc.y) > 1 || ndc.z > 1) continue // anchor off-screen: no leader
       const sx = (ndc.x * 0.5 + 0.5) * W, sy = (1 - (ndc.y * 0.5 + 0.5)) * H
       const r = calloutRects[i]
       const fromX = i === 1 ? r.right + 10 : r.left - 10
