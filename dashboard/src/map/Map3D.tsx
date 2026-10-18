@@ -164,7 +164,15 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     const liveGas = new THREE.Points(new THREE.BufferGeometry(), liveMat)
     liveGas.frustumCulled = false
     liveGas.renderOrder = 3
+    liveGas.visible = false // per-particle points read as opaque discs in 3D: never shown
     scene.add(liveGas)
+    // the haze: large, faint billboards above elevated cells of the draped field, merging into one cloud
+    const hazeMat = gasMat.clone()
+    hazeMat.blending = THREE.AdditiveBlending
+    const haze = new THREE.Points(new THREE.BufferGeometry(), hazeMat)
+    haze.frustumCulled = false
+    haze.renderOrder = 3
+    scene.add(haze)
     const plume = new Plume()
     let plumeAt = 0
     // the floor picture is composed here, a few times a second: granite base (+ fog), the
@@ -249,7 +257,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       alertMat.color.set(T.alert)
       gasMat.blending = T.glow3d === 'additive' ? THREE.AdditiveBlending : THREE.NormalBlending
       gasMat.needsUpdate = true
-      liveMat.needsUpdate = true
+      liveMat.needsUpdate = true; hazeMat.needsUpdate = true
     }
     setTheme()
 
@@ -608,14 +616,15 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
           g.setAttribute('aColor', new THREE.BufferAttribute(Float32Array.from(hc), 3))
           g.setAttribute('aAlpha', new THREE.BufferAttribute(Float32Array.from(ha), 1))
           g.setAttribute('aPhase', new THREE.BufferAttribute(Float32Array.from(hp), 1))
-          liveGas.geometry.dispose(); liveGas.geometry = g
+          haze.geometry.dispose(); haze.geometry = g
         }
-        liveGas.visible = false // per-point haze read as opaque discs; hidden until the draped field ships
-      } else liveGas.visible = false
-      liveMat.uniforms.uTime.value = (performance.now() - t0) / 1000
-      liveMat.uniforms.uScale.value = (HAZE_SIZE * size.h * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360))
-      liveMat.uniforms.uMaxSize.value = 140 * renderer.getPixelRatio()
-      liveMat.uniforms.uAlpha.value = fp ? 0.7 : 1
+        haze.visible = P.layers.gas
+      } else haze.visible = false
+      liveGas.visible = false // the particle Points stay hidden in 3D, whatever the layer toggle
+      hazeMat.uniforms.uTime.value = (performance.now() - t0) / 1000
+      hazeMat.uniforms.uScale.value = (HAZE_SIZE * size.h * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360))
+      hazeMat.uniforms.uMaxSize.value = 140 * renderer.getPixelRatio()
+      hazeMat.uniforms.uAlpha.value = fp ? 0.7 : 1
 
       // orientation: the rose turns with the camera; in first person a heading strip shows degrees and the nearest points
       {
