@@ -2,6 +2,9 @@ import react from '@vitejs/plugin-react'
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 
+const BACKEND = process.env.BACKEND ?? 'http://localhost:8000'
+const VIA_NGINX = !!process.env.BACKEND
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
@@ -15,10 +18,11 @@ export default defineConfig({
     },
   },
   server: {
-    // Same paths as deploy/nginx.conf: /api/<route> -> backend /<route>, /ws/live as-is
+    // Hot-reload dev against a backend. Default: uvicorn on localhost:8000 (/api prefix stripped).
+    //   BACKEND=http://216.128.184.212 npm run dev   -> the Vultr deployment through its nginx (/api kept)
     proxy: {
-      '/api': { target: 'http://localhost:8000', rewrite: (p) => p.replace(/^\/api/, '') },
-      '/ws': { target: 'ws://localhost:8000', ws: true },
+      '/api': { target: BACKEND, rewrite: VIA_NGINX ? undefined : (p) => p.replace(/^\/api/, '') },
+      '/ws': { target: BACKEND.replace(/^http/, 'ws'), ws: true },
     },
   },
 })
