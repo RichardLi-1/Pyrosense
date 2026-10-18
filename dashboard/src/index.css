@@ -21,7 +21,8 @@ button:disabled { opacity: 0.5; cursor: default; }
 .map-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
 .map-canvas:active { cursor: grabbing; }
 
-.brand { font-weight: 600; font-size: 13px; letter-spacing: -0.01em; }
+.brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 600; font-size: 13px; letter-spacing: -0.01em; }
+.brand svg { display: block; color: var(--text); }
 .caption { display: block; font-size: 11px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 .muted { color: var(--muted); }
 .link { color: var(--muted); font-size: 12px; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); }
@@ -103,7 +104,7 @@ button:disabled { opacity: 0.5; cursor: default; }
 .d-focus {
   background: radial-gradient(1200px 800px at 65% 45%, #0d1118 0%, #07090d 70%);
 }
-.f-top { position: absolute; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; padding: 18px 28px; }
+.f-top { position: absolute; z-index: 4; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; padding: 14px 28px; }
 .f-reading { position: absolute; left: 28px; top: 50%; transform: translateY(-55%); display: flex; flex-direction: column; gap: 14px; pointer-events: none; }
 .f-reading .reading-value { font-size: 112px; }
 .f-reading .reading-label { font-size: 15px; }
@@ -182,6 +183,21 @@ button:disabled { opacity: 0.5; cursor: default; }
 .f-reading .crew { margin-top: 4px; }
 .k-start { display: flex; flex-direction: column; gap: 4px; }
 
+/* secondary channels as live tiles under the hero reading */
+.tiles { display: grid; grid-template-columns: repeat(2, 118px); gap: 14px 16px; margin-top: 6px; }
+.tile { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tile .caption { font-size: 10px; letter-spacing: .07em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile-value { font-size: 30px; font-weight: 300; letter-spacing: -0.03em; line-height: 1; color: var(--text); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tile-unit { margin-left: 5px; font-size: 11px; letter-spacing: 0; color: var(--muted); }
+.tile--warn .tile-value { color: var(--alert); }
+.tile--next .tile-value { color: var(--good); }
+.tiles-note { grid-column: 1 / -1; font-size: 11px; color: var(--muted); }
+.tiles-warm { color: var(--moderate); }
+.playback { height: 28px; box-shadow: none; animation: none; }
+.playback.on { background: var(--text); color: var(--bg); border-color: transparent; }
+.f-top .row { gap: 10px; }
+.f-top .status { margin-right: 10px; }
+
 /* secondary sensor channels under the main reading */
 .sensor { margin: 0; display: grid; grid-template-columns: auto auto; column-gap: 16px; row-gap: 4px; font-size: 12px; color: var(--muted); }
 .sensor-row { display: contents; }
@@ -194,3 +210,4 @@ button:disabled { opacity: 0.5; cursor: default; }
 .sensor-warn dd { color: var(--alert); font-weight: 600; }
 .sensor-next dd { color: #5eead4; }
 .map-seg + .map-seg { margin-left: 2px; }
+.source-toggle { height: 28px; box-shadow: none; }

@@ -67,6 +67,26 @@ export function Status({ s }: { s: Dashboard }) {
   return <span className={`status status--${state}`}><i className="dot" />{text}</span>
 }
 
+/** Simulation / Real: which data feeds the dashboard. Real is the backend and the wearable. */
+export function SourceToggle({ kind, setSource }: { kind: 'live' | 'demo'; setSource: (k: 'live' | 'demo') => void }) {
+  return (
+    <div className="map-seg source-toggle" role="group" aria-label="Data source">
+      <button className={kind === 'demo' ? 'on' : ''} onClick={() => setSource('demo')} title="In-browser simulated walk">Simulation</button>
+      <button className={kind === 'live' ? 'on' : ''} onClick={() => setSource('live')} title="Live backend and wearable">Real</button>
+    </div>
+  )
+}
+
+/** Shows the session scrubber; turning it off returns to live. */
+export function PlaybackToggle({ on, set }: { on: boolean; set: (on: boolean) => void }) {
+  return (
+    <button className={`map-btn playback${on ? ' on' : ''}`} onClick={() => set(!on)} aria-pressed={on} title="Scrub back through this session">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor"><path d="M2.5 1.5v9l7.5-4.5z" /></svg>
+      Playback
+    </button>
+  )
+}
+
 const clock = (ms: number) =>
   new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' })
 
@@ -218,7 +238,8 @@ export function SensorPanel({ sensor }: { sensor: Sensor | null }) {
  * integral of the reading over time), from the forecast whether this spot is projected
  * to cross the alert threshold within five minutes, and where to sample next (GP variance).
  */
-export function Outlook({ s, gas }: { s: Dashboard; gas: GasModel | null }) {
+type OutlookNumbers = { dose: number | null; eta: number | null; peak: number | null; next: ReturnType<typeof chooseNext> | null }
+function outlookNumbers(s: Dashboard, gas: GasModel | null): OutlookNumbers {
   const pts = s.history.filter((p) => (p.wearer ?? 'A') === s.selected)
   let dose = 0
   for (let i = 1; i < pts.length; i++) {
@@ -235,12 +256,19 @@ export function Outlook({ s, gas }: { s: Dashboard; gas: GasModel | null }) {
       if (v >= s.threshold && eta == null) eta = fc.horizons[h]
     }
   }
-  const nx = gas && s.until == null ? chooseNext(gas.next, s.pose, gas.field) : null
-  if (!pts.length && eta == null && !nx) return null
-  const k = (v: number) => (v >= 10_000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(0))
+  const next = gas && s.until == null ? chooseNext(gas.next, s.pose, gas.field) : null
+  return { dose: pts.length > 1 ? dose : null, eta, peak, next }
+}
+
+const kfmt = (v: number) => (v >= 10_000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(0))
+
+export function Outlook({ s, gas }: { s: Dashboard; gas: GasModel | null }) {
+  const { dose, eta, peak, next: nx } = outlookNumbers(s, gas)
+  if (dose == null && eta == null && !nx) return null
+  const k = kfmt
   return (
     <dl className="sensor outlook" title="Exposure = reading integrated over time. Projection = diffusion forecast at this position.">
-      {pts.length > 1 && <div className="sensor-row"><dt>exposure</dt><dd className="mono">{k(dose)}<span className="sensor-unit">{SCALE.short || 'idx'}·min</span></dd></div>}
+      {dose != null && <div className="sensor-row"><dt>exposure</dt><dd className="mono">{k(dose)}<span className="sensor-unit">{SCALE.short || 'idx'}·min</span></dd></div>}
       {eta != null
         ? <div className="sensor-row sensor-warn"><dt>projected</dt><dd>&gt; {SCALE.short ? `${s.threshold} ${SCALE.short}` : s.threshold} here in ≤{eta / 60} min</dd></div>
         : peak != null && <div className="sensor-row"><dt>projected</dt><dd className="mono">{peak.toFixed(0)}<span className="sensor-unit">{SCALE.short} in 5 min</span></dd></div>}
@@ -249,6 +277,52 @@ export function Outlook({ s, gas }: { s: Dashboard; gas: GasModel | null }) {
         <dd className="mono">{s.pose ? <>{nx.dist.toFixed(0)}<span className="sensor-unit">m {bearing(s.pose, nx)}</span></> : <>({nx.x.toFixed(0)}, {nx.y.toFixed(0)})</>}</dd>
       </div>}
     </dl>
+  )
+}
+
+function Tile({ caption, value, unit, title, tone }: { caption: string; value: string; unit?: string; title?: string; tone?: 'warn' | 'next' }) {
+  return (
+    <div className={`tile${tone ? ` tile--${tone}` : ''}`} title={title}>
+      <span className="caption">{caption}</span>
+      <span className="tile-value mono">{value}{unit && <span className="tile-unit">{unit}</span>}</span>
+    </div>
+  )
+}
+
+/**
+ * The secondary channels as big live numbers under the hero reading: the SGP30's other
+ * outputs (eCO₂, raw H₂, raw ethanol) and what the session adds up to (exposure, the
+ * five-minute projection at this spot, where to sample next).
+ */
+export function SensorTiles({ s, gas }: { s: Dashboard; gas: GasModel | null }) {
+  const sensor = s.sensor
+  const { dose, eta, peak, next: nx } = outlookNumbers(s, gas)
+  if (!sensor && dose == null && eta == null && !nx) return null
+  const n = (v: number | null | undefined, d = 0) => (v == null ? '—' : v.toFixed(d))
+  const unit = SCALE.short || 'idx'
+  return (
+    <div className="tiles">
+      {sensor && <>
+        <Tile caption="eCO₂ · ppm" value={n(sensor.eco2)} title="Estimated from the H₂ signal, not measured" />
+        <Tile caption="Raw H₂" value={n(sensor.raw_h2)} />
+        <Tile caption="Raw EtOH" value={n(sensor.raw_ethanol)} />
+      </>}
+      {dose != null && <Tile caption={`Exposure · ${unit}·min`} value={kfmt(dose)} title="Reading integrated over this session" />}
+      {eta != null
+        ? <Tile caption="Projected" value={`≤${eta / 60}`} unit="min to alert" tone="warn" title={`Forecast to pass ${s.threshold} here`} />
+        : peak != null && <Tile caption="Projected" value={peak.toFixed(0)} unit="in 5 min" title="Diffusion forecast at this position" />}
+      {nx && <Tile caption="Sample next" value={s.pose ? nx.dist.toFixed(0) : `${nx.x.toFixed(0)}, ${nx.y.toFixed(0)}`}
+                   unit={s.pose ? `m ${bearing(s.pose, nx)}` : undefined} tone="next"
+                   title="Where one more reading would most reduce the map's uncertainty" />}
+      {sensor && (sensor.temperature != null || sensor.humidity != null || !sensor.warmed_up) && (
+        <span className="tiles-note">
+          {sensor.temperature != null && <>{sensor.temperature.toFixed(1)} °C</>}
+          {sensor.temperature != null && sensor.humidity != null && <> · </>}
+          {sensor.humidity != null && <>{sensor.humidity.toFixed(0)} % RH</>}
+          {!sensor.warmed_up && <span className="tiles-warm"> · sensor warming up</span>}
+        </span>
+      )}
+    </div>
   )
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import Focus from './designs/Focus'
 import type { DesignProps, ViewOptions } from './designs/types'
 import { createDemoSource } from './lib/demo'
@@ -22,23 +22,29 @@ function initialDesign(): DesignName {
 }
 
 /** ?source=live|demo, else live if the backend answers, otherwise the in-browser demo. */
-function useSource(): DataSource | null {
+function useSource(): [DataSource | null, (kind: 'live' | 'demo') => void] {
   const [source, setSource] = useState<DataSource | null>(null)
+  const pick = useCallback((kind: 'live' | 'demo') => {
+    setSource(kind === 'demo' ? createDemoSource() : createLiveSource())
+    const u = new URL(location.href)
+    u.searchParams.set('source', kind)
+    history.replaceState(null, '', u)
+  }, [])
   useEffect(() => {
     const q = new URLSearchParams(location.search).get('source')
-    if (q === 'demo') { setSource(createDemoSource()); return }
-    if (q === 'live') { setSource(createLiveSource()); return }
-    backendReachable().then((ok) => setSource(ok ? createLiveSource() : createDemoSource()))
-  }, [])
-  return source
+    if (q === 'demo' || q === 'live') { pick(q); return }
+    backendReachable().then((ok) => pick(ok ? 'live' : 'demo'))
+  }, [pick])
+  return [source, pick]
 }
 
 export default function App() {
-  const source = useSource()
-  return source ? <Dashboard source={source} /> : null
+  const [source, setSource] = useSource()
+  // keyed on kind so a switch remounts the dashboard with fresh state
+  return source ? <Dashboard key={source.kind} source={source} setSource={setSource} /> : null
 }
 
-function Dashboard({ source }: { source: DataSource }) {
+function Dashboard({ source, setSource }: { source: DataSource; setSource: (kind: 'live' | 'demo') => void }) {
   const { s, setUntil, loadSummary, select } = useDashboard(source)
   const [design, setDesign] = useState<DesignName>(initialDesign)
   const [view, setView] = useState<ViewOptions>({ follow: false, showHeat: true, showTrail: true })
@@ -63,7 +69,7 @@ function Dashboard({ source }: { source: DataSource }) {
 
   const gas = useGasModel(s.meta, s.image, s.heat, view.showHeat)
   const Design = DESIGNS[design]
-  const props: DesignProps = useMemo(() => ({ s, setUntil, loadSummary, view, select, gas }), [s, setUntil, loadSummary, view, select, gas])
+  const props: DesignProps = useMemo(() => ({ s, setUntil, loadSummary, view, select, gas, setSource }), [s, setUntil, loadSummary, view, select, gas, setSource])
   return (
     <div className={`t-${design}`}>
       <Design {...props} />

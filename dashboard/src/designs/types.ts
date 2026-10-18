@@ -10,4 +10,5 @@ export type DesignProps = {
   select: (wearer: string) => void
   view: ViewOptions
   gas: GasModel | null
+  setSource: (kind: 'live' | 'demo') => void // Simulation / Real toggle
 }
