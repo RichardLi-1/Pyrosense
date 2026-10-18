@@ -13,7 +13,7 @@ export default function Focus({ s, setUntil, view, select, gas }: DesignProps) {
                alerts={s.alerts} threshold={s.threshold} {...view} gas={gas} inset={{ left: 280, top: 40, bottom: 70 }} />
       <Waiting s={s} />
       <header className="f-top">
-        <span className="brand">Hazard Map</span>
+        <span className="brand">PyroSafe</span>
         <div className="row"><Status s={s} /></div>
       </header>
       <section className="f-reading">
