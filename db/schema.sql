@@ -73,3 +73,17 @@ CREATE TABLE IF NOT EXISTS alerts (
   map_res      REAL
 );
 CREATE INDEX IF NOT EXISTS alerts_session_ts ON alerts (session, ts DESC);
+
+-- Saved scans: a name and the final floor plan for a session, so past walks can be browsed.
+CREATE TABLE IF NOT EXISTS sessions_meta (
+  session      TEXT PRIMARY KEY,
+  name         TEXT,
+  notes        TEXT,
+  saved_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  map_png      BYTEA,
+  map_origin_x REAL,
+  map_origin_y REAL,
+  map_res      REAL,
+  map_w        INT,
+  map_h        INT
+);

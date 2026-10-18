@@ -52,6 +52,30 @@ class SessionBody(BaseModel):
     session: str
 
 
+class SaveBody(BaseModel):
+    name: str | None = None
+    notes: str | None = None
+
+
+class RestartBody(BaseModel):
+    name: str | None = None  # becomes the new session id (slugified); blank = auto timestamp
+
+
+def _slug(s: str) -> str:
+    import re
+    return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-")[:48] or None
+
+
+def _pi_control_url(settings) -> str | None:
+    if settings.pi_control_url:
+        return settings.pi_control_url.rstrip("/")
+    u = settings.bridge_url
+    if not u.startswith("ws"):
+        return None
+    host = u.split("://", 1)[1].split("/")[0].rsplit(":", 1)[0]
+    return f"http://{host}:8766"
+
+
 @router.get("/session")
 async def get_session(req: Request):
     return {"session": req.app.state.live.session, "started": req.app.state.live.started_at.isoformat()}
@@ -66,9 +90,70 @@ async def set_session(req: Request, body: SessionBody):
     return {"session": a.live.session}
 
 
+@router.post("/session/save")
+async def save_session(req: Request, body: SaveBody):
+    """Name the current scan and store its floor plan so it shows in the catalog."""
+    a = req.app.state
+    m = a.live.map
+    await _db(req, a.db.save_session(
+        a.live.session, body.name, body.notes, m.png if m else None,
+        (m.grid.origin_x, m.grid.origin_y) if m else None, m.grid.resolution if m else None,
+        (m.grid.width, m.grid.height) if m else None))
+    try:
+        await a.db.flush_now()
+    except Exception:  # noqa: BLE001
+        pass
+    return {"session": a.live.session, "name": body.name, "saved": True, "has_map": m is not None}
+
+
+@router.post("/session/restart")
+async def restart_session(req: Request, body: RestartBody | None = None):
+    """Start a fresh scan: save the current one, ask the Pi to restart SLAM + the VOC buffer, open a new session."""
+    import asyncio as _asyncio
+    import httpx
+    from .config import auto_session
+    a = req.app.state
+    old = a.live.session
+    m = a.live.map
+    saved = False
+    if a.db.connected and a.live.n_samples:
+        try:
+            await a.db.save_session(old, None, None, m.png if m else None,
+                                    (m.grid.origin_x, m.grid.origin_y) if m else None, m.grid.resolution if m else None,
+                                    (m.grid.width, m.grid.height) if m else None)
+            saved = True
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not snapshot %s before restart: %s", old, e)
+    pi = {"url": _pi_control_url(a.settings), "ok": False, "error": None}
+    if pi["url"]:
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.post(pi["url"] + "/restart")
+                pi["ok"] = r.status_code == 200 and r.json().get("ok", False)
+                if not pi["ok"]:
+                    pi["error"] = r.text[:200]
+        except Exception as e:  # noqa: BLE001
+            pi["error"] = str(e)[:200]
+    new = (_slug(body.name) if body and body.name else None) or auto_session()
+    a.live.new_session(new)
+    a.live.tracker.reset()  # the Pi restarts with an empty list, so all points after this are new
+    a.live.map = None
+    a.alerts.reset()
+    a.bus.publish(a.live.hello_event(a.alerts.threshold, a.settings.voc_unit))
+    return {"session": new, "previous": old, "previous_saved": saved, "pi": pi}
+
+
 @router.get("/sessions")
 async def sessions(req: Request):
     return await _db(req, req.app.state.db.sessions())
+
+
+@router.get("/sessions/{session}/map.png")
+async def session_map(req: Request, session: str):
+    png = await _db(req, req.app.state.db.session_map_png(session))
+    if not png:
+        raise HTTPException(404, "no saved map for this session")
+    return Response(png, media_type="image/png", headers={"Cache-Control": "public, max-age=3600"})
 
 
 @router.get("/heatmap")

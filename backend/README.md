@@ -69,7 +69,10 @@ ROS-specific is installed on the backend host.
 | `GET /map?session=` · `GET /map/meta` | live occupancy PNG / its metadata |
 | `GET /alerts?session=` · `GET /alerts/{id}/map.png` | history + map snapshot at alert time |
 | `GET /summary?session=&force=` | Gemini report (cached 60 s); deterministic fallback text when no key |
-| `GET /sessions` | distinct sessions in `readings` |
+| `GET /sessions` | sessions in `readings`, joined with saved name/notes and `map_png_url` |
+| `POST /session/save` `{name, notes}` | name the current scan and store its floor plan (catalog) |
+| `POST /session/restart` `{name?}` | save current, ask the Pi (`:8766/restart`) to restart SLAM + VOC buffer, open a new session |
+| `GET /sessions/{id}/map.png` | saved floor plan of a past session |
 | `GET/POST /session` | current session id; POST `{session}` to start a new walk |
 | `GET /health` | bridge/db/ws status |
 

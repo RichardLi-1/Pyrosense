@@ -31,6 +31,8 @@ def auto_session() -> str:
 @dataclass
 class Settings:
     bridge_url: str = field(default_factory=lambda: _env("BRIDGE_URL", "ws://localhost:8765"))
+    # Pi control endpoint (pi_control.py). Default: same host as the bridge, port 8766, http.
+    pi_control_url: str | None = field(default_factory=lambda: os.environ.get("PI_CONTROL_URL") or None)
     database_url: str | None = field(default_factory=lambda: os.environ.get("DATABASE_URL") or None)
     gemini_api_key: str | None = field(default_factory=lambda: os.environ.get("GEMINI_API_KEY") or None)
     gemini_model: str = field(default_factory=lambda: _env("GEMINI_MODEL", "gemini-2.5-flash"))

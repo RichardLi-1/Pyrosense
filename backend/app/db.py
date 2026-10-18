@@ -40,8 +40,11 @@ LIMIT $4
 """
 
 SESSIONS_SQL = """
-SELECT session, min(ts) AS started, max(ts) AS ended, count(*) AS n
-FROM readings GROUP BY session ORDER BY started DESC
+SELECT r.session, r.started, r.ended, r.n, m.name, m.notes, m.saved_at, m.map_png IS NOT NULL AS has_map,
+       m.map_origin_x, m.map_origin_y, m.map_res, m.map_w, m.map_h
+FROM (SELECT session, min(ts) AS started, max(ts) AS ended, count(*) AS n FROM readings GROUP BY session) r
+LEFT JOIN sessions_meta m USING (session)
+ORDER BY r.started DESC
 """
 
 TOP_CELLS_SQL = """
@@ -191,8 +194,33 @@ class Database:
     async def sessions(self) -> list[dict[str, Any]]:
         pool = self._require()
         rows = await pool.fetch(SESSIONS_SQL)
-        return [{"session": r["session"], "started": r["started"].isoformat(),
-                 "ended": r["ended"].isoformat(), "n": int(r["n"])} for r in rows]
+        return [{"session": r["session"], "name": r["name"], "notes": r["notes"],
+                 "saved": r["saved_at"].isoformat() if r["saved_at"] else None,
+                 "started": r["started"].isoformat(), "ended": r["ended"].isoformat(), "n": int(r["n"]),
+                 "map_png_url": f"/sessions/{r['session']}/map.png" if r["has_map"] else None,
+                 "map": {"origin": [r["map_origin_x"], r["map_origin_y"]], "res": r["map_res"],
+                         "w": r["map_w"], "h": r["map_h"]} if r["has_map"] else None} for r in rows]
+
+    async def save_session(self, session: str, name: str | None, notes: str | None, map_png: bytes | None,
+                           origin: tuple[float, float] | None, res: float | None, size: tuple[int, int] | None) -> None:
+        pool = self._require()
+        ox, oy = origin if origin else (None, None)
+        w, h = size if size else (None, None)
+        await pool.execute(
+            "INSERT INTO sessions_meta (session, name, notes, saved_at, map_png, map_origin_x, map_origin_y, map_res, map_w, map_h) "
+            "VALUES ($1,$2,$3,now(),$4,$5,$6,$7,$8,$9) "
+            "ON CONFLICT (session) DO UPDATE SET name = COALESCE(EXCLUDED.name, sessions_meta.name), "
+            "notes = COALESCE(EXCLUDED.notes, sessions_meta.notes), saved_at = now(), "
+            "map_png = COALESCE(EXCLUDED.map_png, sessions_meta.map_png), "
+            "map_origin_x = COALESCE(EXCLUDED.map_origin_x, sessions_meta.map_origin_x), "
+            "map_origin_y = COALESCE(EXCLUDED.map_origin_y, sessions_meta.map_origin_y), "
+            "map_res = COALESCE(EXCLUDED.map_res, sessions_meta.map_res), "
+            "map_w = COALESCE(EXCLUDED.map_w, sessions_meta.map_w), map_h = COALESCE(EXCLUDED.map_h, sessions_meta.map_h)",
+            session, name, notes, map_png, ox, oy, res, w, h)
+
+    async def session_map_png(self, session: str) -> bytes | None:
+        pool = self._require()
+        return await pool.fetchval("SELECT map_png FROM sessions_meta WHERE session = $1", session)
 
     async def insert_alert(self, ts: datetime, session: str, x: float | None, y: float | None, voc: float,
                            map_png: bytes | None, map_origin: tuple[float, float] | None,

@@ -13,6 +13,7 @@ dependencies = [
   "mcap-ros2-support>=0.5",
   "google-genai>=1.0",
   "python-dotenv>=1.0",
+  "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
