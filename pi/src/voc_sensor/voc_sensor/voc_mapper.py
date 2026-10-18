@@ -6,6 +6,7 @@ Sensor lag is corrected here: the pose used is map->base_link at (stamp - sensor
 Parameters
   sensor_lag_seconds  float  (default 12.0)
   publish_period_s    float  (default 1.0)
+  full_every_n        int    (default 30: republish the whole buffer every Nth tick; 0 = deltas only)
   max_points          int    (default 50000, ring buffer)
   map_frame           string (default map)
   base_frame          string (default base_link)
@@ -16,6 +17,10 @@ Service
 
 Also publishes /pose (geometry_msgs/PoseStamped, map frame) at pose_rate_hz from the tf tree, because
 slam_toolbox only emits its own pose when the wearer has moved > minimum_travel_distance.
+
+Bandwidth: each tick publishes only the points added since the last tick (plus a full republish
+every `full_every_n` ticks so late subscribers such as Foxglove get the whole set). Every point
+carries its own timestamp, so the backend de-duplicates exactly whichever form it receives.
 """
 from __future__ import annotations
 
@@ -47,6 +52,7 @@ class VocMapper(Node):
         self.declare_parameter("base_frame", "base_link")
         self.declare_parameter("tf_timeout_s", 0.2)
         self.declare_parameter("pose_rate_hz", 10.0)
+        self.declare_parameter("full_every_n", 30)
         self.lag = float(self.get_parameter("sensor_lag_seconds").value)
         self.map_frame = self.get_parameter("map_frame").value
         self.base_frame = self.get_parameter("base_frame").value
@@ -58,6 +64,9 @@ class VocMapper(Node):
         self.tf_listener = TransformListener(self.tf_buffer, self, spin_thread=True)
 
         self.points: deque = deque(maxlen=max_points)
+        self.pending: list = []  # points added since the last publish
+        self.tick = 0
+        self.full_every_n = int(self.get_parameter("full_every_n").value)
         self.dirty = False
         self.dropped = 0
         self.skipped_warmup = 0
@@ -92,20 +101,29 @@ class VocMapper(Node):
                 self.get_logger().warning(f"tf lookup failed ({self.dropped} dropped): {str(e)[:120]}")
             return
         p = tf.transform.translation
-        self.points.append((p.x, p.y, 0.0, float(msg.voc)))
+        t = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        pt = (p.x, p.y, 0.0, float(msg.voc), t)
+        self.points.append(pt)
+        self.pending.append(pt)
         self.dirty = True
 
     def publish(self) -> None:
-        if not self.dirty and self.points:
+        self.tick += 1
+        full = self.full_every_n > 0 and self.tick % self.full_every_n == 0
+        if full and self.points:
+            batch = list(self.points)
+        elif self.pending:
+            batch = self.pending
+        else:
             return
-        if not self.points:
-            return
-        self.pub.publish(make_cloud_msg(self.points, self.get_clock().now().to_msg(), self.map_frame))
+        self.pub.publish(make_cloud_msg(batch, self.get_clock().now().to_msg(), self.map_frame))
+        self.pending = []
         self.dirty = False
 
     def on_reset(self, _req, res):
         n = len(self.points)
         self.points.clear()
+        self.pending = []
         self.dirty = True
         self.pub.publish(make_cloud_msg([], self.get_clock().now().to_msg(), self.map_frame))
         res.success = True
