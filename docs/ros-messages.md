@@ -7,7 +7,7 @@ What each topic on the Pi looks like on the wire, with one decoded example each.
 | `/scan` | `sensor_msgs/LaserScan` | 10 Hz | `rplidar_ros` |
 | `/tf` | `tf2_msgs/TFMessage` | ~10–30 Hz | `rf2o` (odom → base_link), `slam_toolbox` (map → odom) |
 | `/map` | `nav_msgs/OccupancyGrid` | every ~5 s | `slam_toolbox` |
-| `/voc` | `hazard_msgs/VocReading` (custom) | ~1 Hz | `gas_node` |
+| `/voc` | `voc_msgs/VocReading` (custom) | ~1 Hz | `gas_node` |
 | `/wearer_pose` | `geometry_msgs/PoseStamped` | ~5 Hz | `fusion_node` |
 | `/voc_points` | `sensor_msgs/PointCloud2` | ~1 Hz | `fusion_node`. **This is the Pi → backend contract.** |
 
@@ -82,15 +82,18 @@ Example: `data[153 × 400 + 284] = 100` means a wall at (−10 + 284.5 × 0.05, 
 
 ---
 
-## `/voc`: `hazard_msgs/VocReading` (custom)
+## `/voc`: `voc_msgs/VocReading` (custom)
 
 ```yaml
 header: {stamp: {sec: 1760670000, nanosec: 412000000}, frame_id: voc_link}
-voc_index: 183
-raw_resistance: 41230.0
-temperature: 22.4
+voc: 183.0             # TVOC in `unit`
+unit: ppb              # SGP30 reports ppb; "index" if an SGP40 is ever used
+eco2: 412.0            # equivalent CO2, ppm
+raw_h2: 13119.0
+raw_ethanol: 18472.0
+temperature: 22.4      # NaN without a T/RH sensor
 humidity: 41.0
-warmed_up: true        # SGP40/BME68x readings are unreliable until warm-up finishes
+warmed_up: true        # SGP30 returns 0 ppb / 400 ppm during its ~15 s init
 ```
 
 `fusion_node` looks up the pose at this message's `stamp`, so each reading is placed where the wearer was when it was taken.

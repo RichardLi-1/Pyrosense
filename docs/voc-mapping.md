@@ -76,7 +76,7 @@ Straight implementation of the per-reading loop on `/voc_points`, in a `Float32A
 
 | Channel | Encodes | Mapping |
 |---|---|---|
-| Colour | `mean` | LUT: transparent → teal → yellow → red, over `[0, 500]` (SGP40 index) or `[0, 300]` IAQ |
+| Colour | `mean` | LUT: transparent → teal → yellow → red, over `[0, 3000]` ppb (SGP30 TVOC) or `[0, 500]` on the index scale |
 | Opacity | `confidence` | `min(1, W / W_ref)`, `W_ref` = the weight of ~3 close passes |
 | Uncertainty view (toggle) | `sqrt(var)` | Greyscale, high = bright |
 
@@ -90,12 +90,14 @@ The GP's own variance says where one more reading would help most. Every cell th
 
 ## Thresholds & alerting
 
-| Level | SGP40 index | BME680 IAQ | Colour |
+| Level | SGP30 TVOC (ppb) | SGP40 index | Colour |
 |---|---|---|---|
-| Good | < 100 | < 50 | teal |
-| Moderate | 100–250 | 50–150 | yellow |
-| Poor | 250–400 | 150–250 | orange |
-| Alert | > 400 | > 250 | red |
+| Good | < 220 | < 100 | teal |
+| Moderate | 220–660 | 100–250 | yellow |
+| Poor | 660–2200 | 250–400 | orange |
+| Alert | ≥ 2200 | ≥ 400 | red |
+
+The rig uses the SGP30, so the ppb column is the live scale; the backend's `hello` event carries `unit` and `threshold` and the dashboard adapts.
 
 Alert fires when the **live reading** (not the cell mean) exceeds the Alert level for `HOLD_SECONDS` (5), with `COOLDOWN_SECONDS` (60). Uses live reading because the wearer's exposure is the point, not the room average.
 
@@ -108,4 +110,4 @@ Alert fires when the **live reading** (not the cell mean) exceeds the Alert leve
 - Full Gaussian process regression (too slow at live rates, no time).
 - Wind/advection modelling.
 - 3D (2D LiDAR, single scan plane; say so if asked).
-- Absolute concentrations in ppb — the SGP40 index is relative to a learned baseline; be upfront that this maps *relative* air quality.
+- Calibrated concentrations — the SGP30's TVOC ppb is an ethanol-equivalent estimate against a learned baseline, not a lab measurement; be upfront that this maps *relative* air quality.

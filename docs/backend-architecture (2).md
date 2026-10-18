@@ -11,7 +11,7 @@ The Pi is the only machine running ROS 2. Everything downstream is WebSocket / H
 │                                           └──────────────────────────────▶ slam_toolbox      │
 │                                                                              │  /map         │
 │                                                                              │  /pose        │
-│  VOC (SGP40 / BME680) ──I²C──▶ voc_driver ──/voc──▶ voc_mapper ──/voc_points │  tf map→odom  │
+│  VOC (SGP30 TVOC ppb) ──I²C──▶ voc_driver ──/voc──▶ voc_mapper ──/voc_points │  tf map→odom  │
 │                                               (tf lookup map→base_link       │               │
 │                                                at t − sensor_lag)            │               │
 │                                                                              ▼               │

@@ -29,7 +29,7 @@ Project name: **TBD** (shortlist: Canary, Plume, Breathprint, Whiff, Scentry). U
 |---|---|---|---|
 | LiDAR | Slamtec **RPLIDAR C1** (A1 acceptable fallback) | USB serial, 460800 baud | 10 Hz, ~500 pts/rev, 0.05–12 m, ±30 mm. Must be mounted level, unobstructed 360° |
 | Compute | Raspberry Pi 5 | — | Active cooling recommended |
-| VOC | TBD — SGP40 (+SHT4x) or BME680 preferred; CCS811 / MQ-135 acceptable | I²C | 10–60 s response lag; needs warmup |
+| VOC | **Sensirion SGP30** (I²C 0x58) | I²C | TVOC in **ppb** (+ eCO₂ ppm). ~15 s init, baseline matures over hours; 10–60 s response lag |
 | IMU | Optional, **not in v1** | I²C | Add only if heading drifts on turns |
 | Power | USB power bank | — | LiDAR + Pi ≈ 8–10 W |
 

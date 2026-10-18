@@ -33,23 +33,26 @@ map ──▶ odom ──▶ base_link ──▶ laser
 
 ## Custom message
 
-`voc_sensor/msg/VocReading.msg`
+`voc_msgs/msg/VocReading.msg`
 
 ```
 std_msgs/Header header       # stamp = time of the I2C read, frame_id = voc_link
-float32 voc_index            # SGP40 index 0–500, or BME680 IAQ
-float32 raw                  # raw resistance / ppb, sensor-specific
-float32 temperature
-float32 humidity
-bool    warmed_up
+float32 voc                  # concentration in `unit` (SGP30: TVOC ppb)
+string  unit                 # "ppb" | "index"
+float32 eco2                 # equivalent CO2, ppm (SGP30)
+float32 raw_h2               # raw H2 signal (SGP30)
+float32 raw_ethanol          # raw ethanol signal (SGP30)
+float32 temperature          # degC if a T/RH sensor is present, else NaN
+float32 humidity             # %RH if present, else NaN
+bool    warmed_up            # false during sensor warm-up; voc_mapper drops these
 ```
 
 ## voc_driver
 
 - Reads the chip at **2 Hz** (faster is pointless given sensor lag).
 - Stamps with `self.get_clock().now()` *at the moment of the read*, before any processing.
-- Publishes `warmed_up = False` for the first `WARMUP_SECONDS` (SGP40: 60 s, CCS811: 20 min — if CCS811, pre-warm before the demo).
-- Uses the Adafruit CircuitPython library for the chip (`adafruit-circuitpython-sgp40`, `-bme680`, `-ccs811`) over `board.I2C()`.
+- Publishes `warmed_up = False` for the first `WARMUP_SECONDS` (SGP30: ~15 s after `iaq_init`, during which it returns 0 ppb / 400 ppm). The baseline keeps maturing for hours, so power the rig on well before the demo.
+- Uses the Adafruit CircuitPython library for the chip (`adafruit-circuitpython-sgp30`) over `board.I2C()`.
 - Logs one line per reading at `DEBUG`, one per 30 s at `INFO`.
 
 ## voc_mapper
@@ -142,9 +145,9 @@ voc_link:  {x: 0.05, y: 0.0, z: 0.25, yaw: 0.0, pitch: 0.0, roll: 0.0}
 ```yaml
 voc_driver:
   ros__parameters:
-    chip: sgp40          # sgp40 | bme680 | ccs811
+    chip: sgp30          # sgp30 | sgp40
     rate_hz: 2.0
-    warmup_seconds: 60.0
+    warmup_seconds: 20.0
 voc_mapper:
   ros__parameters:
     sensor_lag_seconds: 12.0
@@ -167,7 +170,7 @@ KERNEL=="ttyUSB*", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", MODE:="066
 sudo apt install ros-jazzy-ros-base ros-jazzy-slam-toolbox ros-jazzy-rplidar-ros \
                  ros-jazzy-foxglove-bridge ros-jazzy-tf2-tools ros-jazzy-rosbag2-storage-mcap \
                  python3-pip chrony tmux
-pip install --break-system-packages adafruit-circuitpython-sgp40 adafruit-blinka
+pip install --break-system-packages adafruit-circuitpython-sgp30 adafruit-blinka
 cd ~/ros2_ws/src && git clone https://github.com/MAPIRlab/rf2o_laser_odometry
 cd ~/ros2_ws && colcon build --symlink-install
 sudo usermod -aG dialout,i2c $USER

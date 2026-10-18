@@ -65,7 +65,7 @@ World → screen: `sx = (x − cx)·scale + W/2`, `sy = H/2 − (y − cy)·scal
 0.75  #ff8c42   orange
 1.00  #ef233c   red
 ```
-Input normalised over `[0, 500]` (SGP40 index). Alpha = `min(1, weight / W_ref)`.
+Input normalised over `[0, 3000]` ppb (SGP30 TVOC); `[0, 500]` on the index scale. Alpha = `min(1, weight / W_ref)`.
 
 ## Right rail
 
