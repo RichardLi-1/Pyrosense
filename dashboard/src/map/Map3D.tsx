@@ -555,7 +555,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
           g.setAttribute('aPhase', new THREE.BufferAttribute(snap.phases, 1))
           liveGas.geometry.dispose(); liveGas.geometry = g
         }
-        liveGas.visible = true
+        liveGas.visible = false // per-particle points read as opaque discs in 3D; the draped field carries the gas instead
       } else liveGas.visible = false
       for (const [m, sz, al] of [[liveMat, GAS_SIZE, 0.35]] as const) {
         m.uniforms.uTime.value = (performance.now() - t0) / 1000
