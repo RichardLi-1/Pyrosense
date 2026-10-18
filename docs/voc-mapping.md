@@ -84,6 +84,10 @@ Draw each cell as a filled rect, then apply `filter: blur(6px)` on the heat canv
 
 Never-visited cells are fully transparent — the map stays honest about what we didn't measure.
 
+### Next-best sample
+
+The GP's own variance says where one more reading would help most. Every cell the field can reach (`conf > 0`) is scored `sd · (1 + excess/σf) · (1 + 2·p_source)`: posterior standard deviation first, nudged toward cells predicted above background and toward the source posterior, so the suggestion confirms or rules out a hazard rather than sending someone to a quiet corridor. Candidates come from the 1.6 m lattice with non-maximum suppression (at most five distinct regions, computed in the model worker, `lib/nextSample.ts`). On the main thread the pick is the best score discounted by **walking** distance from the selected wearer, `score · exp(−d_geo / 12 m)`, so a candidate in the next room through a door beats one behind the wall. Shown as a dotted ring labelled "sample next" on the 2D and 3D maps and as a "sample next · N m NE" row under the reading. Hidden during replay and while a forecast horizon is selected.
+
 ## Thresholds & alerting
 
 | Level | SGP40 index | BME680 IAQ | Colour |

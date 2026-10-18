@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { LEVEL_LABEL, SCALE, level, levelColor } from '../lib/colors'
 import type { Sensor } from '../lib/types'
+import { bearing, chooseNext } from '../lib/nextSample'
+import type { GasModel } from '../lib/gasModel'
+import { sampleAt } from '../lib/gasModel'
 import type { Dashboard } from '../lib/useDashboard'
 import type { Alert, TrailPoint } from '../lib/types'
 
@@ -206,6 +209,45 @@ export function SensorPanel({ sensor }: { sensor: Sensor | null }) {
         </div>
       ))}
       {!sensor.warmed_up && <div className="sensor-row sensor-warm"><dt>sensor</dt><dd>warming up…</dd></div>}
+    </dl>
+  )
+}
+
+/**
+ * Layer 4, what it means for the wearer: cumulative exposure this session (ppb·min, the
+ * integral of the reading over time), from the forecast whether this spot is projected
+ * to cross the alert threshold within five minutes, and where to sample next (GP variance).
+ */
+export function Outlook({ s, gas }: { s: Dashboard; gas: GasModel | null }) {
+  const pts = s.history.filter((p) => (p.wearer ?? 'A') === s.selected)
+  let dose = 0
+  for (let i = 1; i < pts.length; i++) {
+    const dt = (Date.parse(pts[i].ts) - Date.parse(pts[i - 1].ts)) / 60_000
+    if (dt > 0 && dt < 2) dose += ((pts[i].voc + pts[i - 1].voc) / 2) * dt
+  }
+  let eta: number | null = null, peak: number | null = null
+  const fc = gas?.forecast
+  if (fc && s.pose && s.until == null) {
+    for (let h = 0; h < fc.horizons.length; h++) {
+      const v = sampleAt(fc, fc.mean[h], s.pose.x, s.pose.y)
+      if (Number.isNaN(v)) continue
+      peak = Math.max(peak ?? 0, v)
+      if (v >= s.threshold && eta == null) eta = fc.horizons[h]
+    }
+  }
+  const nx = gas && s.until == null ? chooseNext(gas.next, s.pose, gas.field) : null
+  if (!pts.length && eta == null && !nx) return null
+  const k = (v: number) => (v >= 10_000 ? `${(v / 1000).toFixed(1)}k` : v.toFixed(0))
+  return (
+    <dl className="sensor outlook" title="Exposure = reading integrated over time. Projection = diffusion forecast at this position.">
+      {pts.length > 1 && <div className="sensor-row"><dt>exposure</dt><dd className="mono">{k(dose)}<span className="sensor-unit">{SCALE.short || 'idx'}·min</span></dd></div>}
+      {eta != null
+        ? <div className="sensor-row sensor-warn"><dt>projected</dt><dd>&gt; {SCALE.short ? `${s.threshold} ${SCALE.short}` : s.threshold} here in ≤{eta / 60} min</dd></div>
+        : peak != null && <div className="sensor-row"><dt>projected</dt><dd className="mono">{peak.toFixed(0)}<span className="sensor-unit">{SCALE.short} in 5 min</span></dd></div>}
+      {nx && <div className="sensor-row sensor-next" title="Where one more reading would most reduce the map's uncertainty (GP variance, weighted toward predicted-elevated areas)">
+        <dt>sample next</dt>
+        <dd className="mono">{s.pose ? <>{nx.dist.toFixed(0)}<span className="sensor-unit">m {bearing(s.pose, nx)}</span></> : <>({nx.x.toFixed(0)}, {nx.y.toFixed(0)})</>}</dd>
+      </div>}
     </dl>
   )
 }

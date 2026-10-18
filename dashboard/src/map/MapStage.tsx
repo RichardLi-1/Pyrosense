@@ -1,7 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
-import { BAND_RGB } from '../lib/heatImage'
-import { SCALE, levelRanges } from '../lib/colors'
-import { useSourceModel } from '../lib/useSourceModel'
+import { RAMP_BANDS, SCALE, levelRanges, rampGradient } from '../lib/colors'
+import { HORIZONS } from '../lib/forecast'
 import MapView from './MapView'
 import { insets, type MapProps } from './types'
 
@@ -48,9 +47,11 @@ export default function MapStage(props: MapProps & { legend?: boolean }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [doRecenter])
 
-  const model = useSourceModel(props.meta, props.image, props.heat, props.showHeat)
+  const [horizon, setHorizon] = useState<number | null>(null)
+  const gas = props.showHeat ? props.gas ?? null : null
+  const model = gas?.source ?? null
   const ins = insets(props.inset)
-  const r = { ...props, recenter, onMoved, model }
+  const r = { ...props, recenter, onMoved, model, gas, horizon: mode === '2d' ? horizon : null }
   return (
     <>
       {mode === '2d' ? <MapView {...r} /> : <Suspense fallback={null}><Map3D {...r} firstPerson={mode === 'fp'} /></Suspense>}
@@ -65,6 +66,14 @@ export default function MapStage(props: MapProps & { legend?: boolean }) {
             {mode === 'fp' ? 'Look ahead' : 'Recenter'}
           </button>
         )}
+        {mode === '2d' && gas?.forecast && (
+          <div className="map-seg" role="group" aria-label="Forecast" title="Projected spread by diffusion through the mapped floor plan (no airflow model)">
+            <button className={horizon == null ? 'on' : ''} onClick={() => setHorizon(null)}>Now</button>
+            {HORIZONS.map((h) => (
+              <button key={h} className={horizon === h ? 'on' : ''} onClick={() => setHorizon(h)}>+{h / 60} min</button>
+            ))}
+          </div>
+        )}
         <div className="map-seg" role="group" aria-label="View">
           {MODES.map(({ m, label }) => (
             <button key={m} className={m === mode ? 'on' : ''} onClick={() => { setMode(m); setMoved(false) }}
@@ -74,13 +83,17 @@ export default function MapStage(props: MapProps & { legend?: boolean }) {
       </div>
 
       {props.legend !== false && (
-        <div className="legend" style={{ left: ins.left + 16, bottom: ins.bottom + 16 }}>
-          {LEGEND.map((l) => (
-            <span key={l.key} title={`${SCALE.label} ${levelRanges()[l.key]}`}>
-              <i style={{ background: `rgb(${BAND_RGB[l.key].join(',')})` }} />{l.label}
-            </span>
-          ))}
-          <span className="legend-note">{mode === '2d' ? 'Striped = predicted' : 'Faint floor & gas cloud = predicted'}</span>
+        <div className="legend" style={{ left: ins.left + 16, bottom: ins.bottom + 16 }} title={SCALE.label}>
+          <div className="legend-ramp" style={{ background: rampGradient() }}>
+            {RAMP_BANDS.slice(1).map((t) => <i key={t} style={{ left: `${t * 100}%` }} />)}
+          </div>
+          <div className="legend-bands">
+            {LEGEND.map((l, i) => {
+              const w = ((RAMP_BANDS[i + 1] ?? 1) - RAMP_BANDS[i]) * 100
+              return <span key={l.key} style={{ width: `${w}%` }} title={`${SCALE.label} ${levelRanges()[l.key]}`}>{l.label}</span>
+            })}
+          </div>
+          <span className="legend-note">{mode === '2d' ? 'Striped = predicted · dotted ring = sample next' : 'Faint floor & gas cloud = predicted · dotted ring = sample next'}</span>
         </div>
       )}
     </>

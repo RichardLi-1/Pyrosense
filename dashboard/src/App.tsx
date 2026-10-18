@@ -3,6 +3,7 @@ import Focus from './designs/Focus'
 import type { DesignProps, ViewOptions } from './designs/types'
 import { createDemoSource } from './lib/demo'
 import { backendReachable, createLiveSource } from './lib/live'
+import { useGasModel } from './lib/useGasModel'
 import type { DataSource } from './lib/types'
 import { useDashboard } from './lib/useDashboard'
 
@@ -60,8 +61,9 @@ function Dashboard({ source }: { source: DataSource }) {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  const gas = useGasModel(s.meta, s.image, s.heat, view.showHeat)
   const Design = DESIGNS[design]
-  const props: DesignProps = useMemo(() => ({ s, setUntil, loadSummary, view, select }), [s, setUntil, loadSummary, view, select])
+  const props: DesignProps = useMemo(() => ({ s, setUntil, loadSummary, view, select, gas }), [s, setUntil, loadSummary, view, select, gas])
   return (
     <div className={`t-${design}`}>
       <Design {...props} />

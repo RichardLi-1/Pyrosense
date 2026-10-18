@@ -1,11 +1,8 @@
-// Fits the source model off the main thread (see sourceModel.ts).
-import { fitSourceModel, passGridFromAlpha, type Obs } from './sourceModel'
+// Runs the gas model off the main thread (see gasModel.ts).
+import { runGasModel, transferables, type GasRequest } from './gasModel'
 
-type Req = { id: number; alpha: Uint8ClampedArray; meta: { origin: [number, number]; res: number; w: number; h: number }; obs: Obs[] }
-
-self.onmessage = (e: MessageEvent<Req>) => {
-  const { id, alpha, meta, obs } = e.data
-  const grid = passGridFromAlpha(alpha, meta)
-  const model = fitSourceModel(grid, obs)
-  ;(self as unknown as Worker).postMessage({ id, model }, model ? [model.field.buffer] : [])
+self.onmessage = (e: MessageEvent<GasRequest & { id: number }>) => {
+  const { id, ...req } = e.data
+  const model = runGasModel(req)
+  ;(self as unknown as Worker).postMessage({ id, model }, transferables(model))
 }

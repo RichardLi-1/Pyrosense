@@ -10,7 +10,7 @@
 // Runs in a worker (model.worker.ts); pure functions here so it's testable.
 
 export type PassGrid = { x0: number; y0: number; res: number; cols: number; rows: number; pass: Uint8Array }
-export type Obs = { x: number; y: number; v: number; w: number }
+export type Obs = { x: number; y: number; v: number; w: number; sd?: number }
 export type Source = { x: number; y: number; q: number }
 export type SourceModel = {
   x0: number; y0: number; res: number; cols: number; rows: number
@@ -26,7 +26,37 @@ const MAX_SOURCES = 3
 const RIDGE = 0.05
 const MAX_Q_FACTOR = 4 // strength at most 4x the largest excess reading
 const MAX_REACH = 6 // m: a source must be within this walking distance of some reading
-const LS = [1.5, 2.5, 4]
+export const LS = [1.5, 2.5, 4]
+export const LATTICE_M = 1.6 // candidate source spacing (metres)
+
+/** Candidate -> geodesic distance at every observation (obs order). Shared with sourcePosterior. */
+export type DistCache = Map<number, Float32Array>
+
+export function cellIndex(g: PassGrid, x: number, y: number) {
+  const c = Math.floor((x - g.x0) / g.res), r = Math.floor((y - g.y0) / g.res)
+  return c >= 0 && r >= 0 && c < g.cols && r < g.rows ? r * g.cols + c : -1
+}
+
+export function lattice(g: PassGrid): number[] {
+  const stride = Math.max(1, Math.round(LATTICE_M / g.res))
+  const out: number[] = []
+  for (let r = Math.floor(stride / 2); r < g.rows; r += stride) for (let c = Math.floor(stride / 2); c < g.cols; c += stride) {
+    if (g.pass[r * g.cols + c]) out.push(r * g.cols + c)
+  }
+  return out
+}
+
+export function distancesAtObs(g: PassGrid, obsCells: number[], cache: DistCache) {
+  return (ci: number) => {
+    let d = cache.get(ci)
+    if (!d) {
+      const full = geodesic(g, ci, 16)
+      d = Float32Array.from(obsCells, (k) => (k < 0 ? Infinity : full[k]))
+      cache.set(ci, d)
+    }
+    return d
+  }
+}
 const SQ2 = Math.SQRT2
 
 /** Geodesic distance (metres) from cell `from` to every cell, 8-connected, no corner cutting. */
@@ -84,35 +114,19 @@ function percentile(v: number[], p: number) {
   return s[Math.min(s.length - 1, Math.floor(p * s.length))]
 }
 
-export function fitSourceModel(g: PassGrid, obs: Obs[]): SourceModel | null {
+export function fitSourceModel(g: PassGrid, obs: Obs[], cache: DistCache = new Map()): SourceModel | null {
   if (obs.length < 8) return null
   const { cols, rows, res, x0, y0 } = g
-  const cell = (x: number, y: number) => {
-    const c = Math.floor((x - x0) / res), r = Math.floor((y - y0) / res)
-    return c >= 0 && r >= 0 && c < cols && r < rows ? r * cols + c : -1
-  }
   const base = percentile(obs.map((o) => o.v), 0.25)
-  const oi = obs.map((o) => cell(o.x, o.y))
+  const oi = obs.map((o) => cellIndex(g, o.x, o.y))
   const resid0 = obs.map((o) => o.v - base)
   const qMax = MAX_Q_FACTOR * Math.max(1, ...resid0)
   const sse = (r: number[]) => r.reduce((s, x, i) => s + obs[i].w * x * x, 0)
 
   // candidate lattice over passable cells
-  const stride = Math.max(1, Math.round(1.6 / res))
-  const cands: number[] = []
-  for (let r = Math.floor(stride / 2); r < rows; r += stride) for (let c = Math.floor(stride / 2); c < cols; c += stride) {
-    if (g.pass[r * cols + c]) cands.push(r * cols + c)
-  }
-  const atObs = new Map<number, Float32Array>() // candidate -> distance at each observation
-  const distAtObs = (ci: number) => {
-    let d = atObs.get(ci)
-    if (!d) {
-      const full = geodesic(g, ci, 16)
-      d = Float32Array.from(oi, (k) => (k < 0 ? Infinity : full[k]))
-      atObs.set(ci, d)
-    }
-    return d
-  }
+  const stride = Math.max(1, Math.round(LATTICE_M / res))
+  const cands = lattice(g)
+  const distAtObs = distancesAtObs(g, oi, cache)
 
   let best: { L: number; sources: { ci: number; q: number }[]; err: number } | null = null
   for (const L of LS) {

@@ -2,15 +2,15 @@
 import MapStage from '../map/MapStage'
 import { THEMES } from '../map/theme'
 import { SCALE } from '../lib/colors'
-import { AlertBanner, Attitude, Crew, Reading, SensorPanel, Sparkline, Status, Timeline, Waiting, useNow } from '../ui/parts'
+import { AlertBanner, Attitude, Crew, Outlook, Reading, SensorPanel, Sparkline, Status, Timeline, Waiting, useNow } from '../ui/parts'
 import type { DesignProps } from './types'
 
-export default function Focus({ s, setUntil, view, select }: DesignProps) {
+export default function Focus({ s, setUntil, view, select, gas }: DesignProps) {
   const now = useNow()
   return (
     <div className="design d-focus">
       <MapStage theme={THEMES.focus} meta={s.meta} image={s.image} heat={s.heat} trail={s.trail} pose={s.pose} poses={s.poses} selected={s.selected!}
-               alerts={s.alerts} threshold={s.threshold} {...view} inset={{ left: 280, top: 40, bottom: 70 }} />
+               alerts={s.alerts} threshold={s.threshold} {...view} gas={gas} inset={{ left: 280, top: 40, bottom: 70 }} />
       <Waiting s={s} />
       <header className="f-top">
         <span className="brand">Hazard Map</span>
@@ -22,6 +22,7 @@ export default function Focus({ s, setUntil, view, select }: DesignProps) {
         <Sparkline points={s.window} />
         <Attitude pose={s.pose} />
         <SensorPanel sensor={s.sensor} />
+        <Outlook s={s} gas={gas} />
         <Crew s={s} select={select} colors={THEMES.focus.crew} />
       </section>
       <AlertBanner alerts={s.alerts} now={now} crew={s.crew.length} />

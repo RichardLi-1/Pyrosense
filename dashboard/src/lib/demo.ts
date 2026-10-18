@@ -306,7 +306,7 @@ export function createDemoSource(): DataSource {
       emit = onEvent
       onStatus(true)
       const recent = readings.filter((r) => r.t > t - 60)
-      onEvent({ t: 'hello', session: `demo-crew-${crew}`, started: iso(0), threshold: THRESHOLD, bridge_connected: true,
+      onEvent({ t: 'hello', session: `demo-crew-${crew}`, started: iso(0), threshold: THRESHOLD, unit: 'index', bridge_connected: true,
                 n_samples: readings.length, voc_window: recent.map((r) => [t0 + r.t, r.voc]), wearers: agents.map((a) => a.id) })
       onEvent({ t: 'map', ...mapMeta() })
       poseEvents().forEach(onEvent)

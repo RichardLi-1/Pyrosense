@@ -1,3 +1,4 @@
+import type { GasModel } from '../lib/gasModel'
 import type { SourceModel } from '../lib/sourceModel'
 import type { Alert, HeatCell, MapMeta, Pose, TrailPoint } from '../lib/types'
 import type { MapTheme } from './theme'
@@ -20,11 +21,14 @@ export type MapProps = {
   showTrail: boolean
   /** Screen-space insets (px) the camera keeps clear for overlaid UI. */
   inset?: Inset
+  /** The gas model (field, source posterior, forecast, next-sample candidates), computed once at the top level. */
+  gas?: GasModel | null
 }
 
 /** What MapStage adds for the 2D/3D renderers. */
 export type RendererProps = MapProps & {
   model: SourceModel | null // predicted VOC beyond what's sensed
+  horizon: number | null // seconds ahead to show the forecast for, null = now
   recenter: number // bump to animate back to the default view
   onMoved: (moved: boolean) => void
 }

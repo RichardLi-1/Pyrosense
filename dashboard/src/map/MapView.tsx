@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react'
-import { bandImage, isolines, kernelGrid, strokeIsolines, type HeatImage, type Isoline } from '../lib/heatImage'
+import { SCALE } from '../lib/colors'
+import { bandImage, isolines, kernelGrid, layerGrid, strokeIsolines, type HeatImage, type Isoline } from '../lib/heatImage'
 import { predict, predictedOnly } from '../lib/predict'
+import { chooseNext } from '../lib/nextSample'
 import { DEFAULT_WEARER } from '../lib/types'
 import { drawHardHat } from './theme'
 import { TRAIL_S, crewColor, insets, type RendererProps } from './types'
@@ -28,7 +30,7 @@ export default function MapView(props: RendererProps) {
   // Re-render the occupancy grid in theme colours whenever the map or theme changes.
   const occ = useRef<HTMLCanvasElement | null>(null)
   const free = useRef<HTMLCanvasElement | null>(null) // scanned free space, to clip heat at walls
-  const { image, meta, theme, heat: cells, recenter, onMoved, model } = props
+  const { image, meta, theme, heat: cells, recenter, onMoved, model, gas, horizon } = props
   useEffect(() => {
     if (!image || !meta) return
     const c = document.createElement('canvas')
@@ -54,26 +56,66 @@ export default function MapView(props: RendererProps) {
     free.current = mc
   }, [image, meta, theme])
 
-  // Heat: crisp level bands from the kernel-smoothed 20 cm cells.
+  // Heat. With the gas model: the GP field (mean where confident, opacity = confidence),
+  // or a forecast horizon. Before the model has run: crisp bands from the kernel-smoothed cells.
+  const CONF_MEASURED = 0.35 // below this a cell is drawn as "predicted" (striped)
   const heat = useRef<HeatImage | null>(null)
   const contours = useRef<Isoline[]>([])
+  const predicted = useRef<{ img: HeatImage; lines: Isoline[] } | null>(null)
   useEffect(() => {
+    const field = gas?.field
+    const fc = gas?.forecast
+    if (horizon != null && fc) {
+      // projection: everything striped, nothing claims to be measured
+      const h = Math.max(0, fc.horizons.indexOf(horizon))
+      const g = layerGrid(fc, fc.mean[h], null, 0.1)
+      for (let i = 0; i < g.den.length; i++) if (g.num[i] < SCALE.bands[0] * 0.8) g.den[i] = 0
+      heat.current = null; contours.current = []
+      predicted.current = { img: bandImage(g, { minSupport: 0.5, alphaScale: 3.4 }), lines: isolines(g, { minSupport: 0.5 }) }
+      return
+    }
+    if (field) {
+      const g = layerGrid(field, field.mean, field.conf, 0.1)
+      const opts = { prior: g.prior, priorWeight: CONF_MEASURED }
+      heat.current = bandImage(g, { ...opts, alphaBy: g.conf, skipThin: true })
+      contours.current = isolines(g, { ...opts, allCorners: true })
+      // thin-confidence part above the first band: the extrapolation, striped
+      const pg = { ...g, num: new Float32Array(g.num.length), den: new Float32Array(g.den.length) }
+      for (let i = 0; i < g.den.length; i++) if (g.conf[i] < CONF_MEASURED && g.num[i] >= SCALE.bands[0]) { pg.num[i] = g.num[i]; pg.den[i] = 1 }
+      predicted.current = { img: bandImage(pg, { minSupport: 0.5, alphaScale: 3.2 }), lines: isolines(pg, { minSupport: 0.5 }) }
+      return
+    }
     const g = kernelGrid(cells, SIGMA_M, 0.05)
     heat.current = g ? bandImage(g) : null
     contours.current = g ? isolines(g) : []
-  }, [cells])
-
-  // Predicted (not yet measured) areas from the source model: drawn striped, and not
-  // clipped to scanned space, since the point is to show what's behind unexplored doors.
-  const predicted = useRef<{ img: HeatImage; lines: Isoline[] } | null>(null)
-  useEffect(() => {
     if (!model || !cells.length) { predicted.current = null; return }
     const bounds = { x0: model.x0, y0: model.y0, x1: model.x0 + model.cols * model.res, y1: model.y0 + model.rows * model.res }
     const pred = predict(cells, bounds, model, SIGMA_M, model.res)
     if (!pred) { predicted.current = null; return }
-    const g = predictedOnly(pred)
-    predicted.current = { img: bandImage(g, { minSupport: 0.5, alphaScale: 3.2 }), lines: isolines(g, { minSupport: 0.5 }) }
-  }, [model, cells])
+    const pg = predictedOnly(pred)
+    predicted.current = { img: bandImage(pg, { minSupport: 0.5, alphaScale: 3.2 }), lines: isolines(pg, { minSupport: 0.5 }) }
+  }, [gas, horizon, model, cells])
+
+  // Source posterior: a soft haze where the gas most likely comes from.
+  const haze = useRef<HeatImage | null>(null)
+  useEffect(() => {
+    const sp = gas?.sourceProb
+    if (!sp || !sp.peak) { haze.current = null; return }
+    const g = layerGrid(sp, sp.prob, null, 0.1) // bilinear upsample so the haze is soft, not blocky
+    const canvas = document.createElement('canvas')
+    canvas.width = g.cols; canvas.height = g.rows
+    const ctx = canvas.getContext('2d')!
+    const img = ctx.createImageData(g.cols, g.rows)
+    const [cr, cg, cb] = [255, 77, 94]
+    for (let r = 0; r < g.rows; r++) for (let c = 0; c < g.cols; c++) {
+      const p = g.num[r * g.cols + c] / sp.peak
+      if (!(p > 0.04)) continue
+      const o = ((g.rows - 1 - r) * g.cols + c) * 4
+      img.data[o] = cr; img.data[o + 1] = cg; img.data[o + 2] = cb; img.data[o + 3] = Math.round(255 * 0.5 * Math.min(1, p) ** 1.5)
+    }
+    ctx.putImageData(img, 0, 0)
+    haze.current = { canvas, x0: g.x0, y1: g.y0 + g.rows * g.res, w: g.cols * g.res, h: g.rows * g.res }
+  }, [gas])
 
   useEffect(() => {
     if (recenter) { manual.current = false; onMoved(false) }
@@ -181,7 +223,7 @@ export default function MapView(props: RendererProps) {
         lctx.clearRect(0, 0, w, h)
         lctx.imageSmoothingEnabled = true
         lctx.drawImage(hm.canvas, sx(hm.x0), sy(hm.y1), hm.w * c.scale, hm.h * c.scale)
-        strokeIsolines(lctx, contours.current, sx, sy, 1.5)
+        strokeIsolines(lctx, contours.current, sx, sy, 1.4, T.ink)
         lctx.globalCompositeOperation = 'destination-in'
         lctx.imageSmoothingEnabled = false
         lctx.drawImage(free.current, ...mapRect)
@@ -209,12 +251,21 @@ export default function MapView(props: RendererProps) {
         pctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         pctx.globalCompositeOperation = 'source-over'
         pctx.globalAlpha = 0.55
-        strokeIsolines(pctx, pr.lines, sx, sy, 1)
+        strokeIsolines(pctx, pr.lines, sx, sy, 1, T.ink)
         pctx.globalAlpha = 1
         ctx.save()
         ctx.setTransform(1, 0, 0, 1, 0, 0)
         ctx.globalCompositeOperation = T.heatBlend
         ctx.drawImage(play, 0, 0)
+        ctx.restore()
+      }
+      // where the source most likely is
+      const hz = haze.current
+      if (P.showHeat && hz && P.horizon == null) {
+        ctx.save()
+        ctx.globalCompositeOperation = T.heatBlend
+        ctx.imageSmoothingEnabled = true
+        ctx.drawImage(hz.canvas, sx(hz.x0), sy(hz.y1), hz.w * c.scale, hz.h * c.scale)
         ctx.restore()
       }
       if (P.showHeat && P.model) {
@@ -231,6 +282,23 @@ export default function MapView(props: RendererProps) {
           ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke()
           ctx.fillText('likely source', x, y - r - 6)
         }
+        ctx.restore()
+      }
+      // where a reading would help most (GP variance), from where the selected wearer stands
+      const nx = P.gas && P.horizon == null ? chooseNext(P.gas.next, me ?? P.pose, P.gas.field) : null
+      if (P.showHeat && nx) {
+        const x = sx(nx.x), y = sy(nx.y), r = Math.max(8, nx.r * c.scale)
+        ctx.save()
+        ctx.strokeStyle = T.next
+        ctx.fillStyle = T.next
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([2, 3])
+        ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke()
+        ctx.setLineDash([])
+        ctx.beginPath(); ctx.moveTo(x - 4, y); ctx.lineTo(x + 4, y); ctx.moveTo(x, y - 4); ctx.lineTo(x, y + 4); ctx.stroke()
+        ctx.font = '500 10px Inter, system-ui, sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText('sample next', x, y - r - 6)
         ctx.restore()
       }
 
