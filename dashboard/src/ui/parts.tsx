@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { LEVEL_LABEL, SCALE, level, levelColor } from '../lib/colors'
 import { responderLabel, type Sensor } from '../lib/types'
-import { bearing, chooseNext, explainNext } from '../lib/nextSample'
+import { bearing, chooseNext, explainMovement, gasKind, predictMovement } from '../lib/nextSample'
 import type { GasModel } from '../lib/gasModel'
 import { sampleAt } from '../lib/gasModel'
 import type { Dashboard } from '../lib/useDashboard'
@@ -313,7 +313,8 @@ function Tile({ caption, value, unit, title, tone, spark, note }: { caption: str
 export function SensorTiles({ s, gas }: { s: Dashboard; gas: GasModel | null }) {
   const sensor = s.sensor
   const { dose, doseSeries, eta, peak, next: nx } = outlookNumbers(s, gas)
-  if (!sensor && dose == null && eta == null && !nx) return null
+  const mv = gas && s.until == null ? predictMovement(gas, s.pose, nx) : null
+  if (!sensor && dose == null && eta == null && !mv) return null
   const w = s.sensorWindow
   const t60 = Date.now() - 60_000
   const recent = doseSeries.filter(([t]) => t >= t60)
@@ -330,10 +331,11 @@ export function SensorTiles({ s, gas }: { s: Dashboard; gas: GasModel | null }) 
       {eta != null
         ? <Tile caption="Projected" value={`≤${eta / 60}`} unit="min to alert" tone="warn" title={`Forecast to pass ${s.threshold} here`} />
         : peak != null && <Tile caption="Projected" value={peak.toFixed(0)} unit="in 5 min" title="Diffusion forecast at this position" />}
-      {nx && gas?.field && <Tile caption="Gas movement prediction" value={s.pose ? nx.dist.toFixed(0) : `${nx.x.toFixed(0)}, ${nx.y.toFixed(0)}`}
-                   unit={s.pose ? `m ${bearing(s.pose, nx)}` : undefined} tone="next"
-                   title="Where the gas is predicted to move next; one more reading there would most reduce the map's uncertainty"
-                   note={explainNext(nx, gas.field, s.pose).split(' · ').slice(1).join(' · ') || undefined} />}
+      {mv && <Tile caption="Gas movement prediction"
+                   value={s.pose ? Math.hypot(mv.x - s.pose.x, mv.y - s.pose.y).toFixed(0) : `${mv.x.toFixed(0)}, ${mv.y.toFixed(0)}`}
+                   unit={s.pose ? `m ${bearing(s.pose, mv)}` : undefined} tone="next"
+                   title="Where the gas is predicted to be heading, from the diffusion forecast and the GP field"
+                   note={explainMovement(mv, gasKind(s.window, s.sensorWindow.eco2)).join('\n')} />}
       {sensor && (sensor.temperature != null || sensor.humidity != null || !sensor.warmed_up) && (
         <span className="tiles-note">
           {sensor.temperature != null && <>{sensor.temperature.toFixed(1)} °C</>}

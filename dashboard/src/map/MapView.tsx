@@ -3,7 +3,8 @@ import { SCALE } from '../lib/colors'
 import { bandImage, isolines, kernelGrid, layerGrid, strokeIsolines, type HeatImage, type Isoline } from '../lib/heatImage'
 import { predict, predictedOnly } from '../lib/predict'
 import { drawMark, markKind } from '../lib/marks'
-import { chooseNext, explainNext } from '../lib/nextSample'
+import { chooseNext, explainMovement, predictMovement } from '../lib/nextSample'
+import { Plume, type FreeMask } from '../lib/plume'
 import { DEFAULT_WEARER, responderLabel } from '../lib/types'
 import { uncertaintyImage } from '../lib/uncertainty'
 import { drawHardHat } from './theme'
@@ -41,6 +42,8 @@ export default function MapView(props: RendererProps) {
   const occ = useRef<HTMLCanvasElement | null>(null)
   const free = useRef<HTMLCanvasElement | null>(null) // scanned free space, to clip heat at walls
   const known = useRef<Box | null>(null) // what has been mapped so far, for the default camera
+  const freeMask = useRef<FreeMask | null>(null) // scanned free space as a lookup, for wall-blocked particles
+  const plume = useRef(new Plume())
   const { image, meta, theme, heat: cells, recenter, onMoved, model, gas, horizon } = props
   useEffect(() => {
     if (!image || !meta) return
@@ -52,14 +55,17 @@ export default function MapView(props: RendererProps) {
     const d = px.data
     known.current = knownBounds((i) => d[i * 4 + 3], meta)
     const mask = new ImageData(meta.w, meta.h)
+    const lookup = new Uint8Array(meta.w * meta.h)
     for (let i = 0; i < d.length; i += 4) {
       const a = d[i + 3]
       if (a === 0) continue
       const isFree = a > 240 // backend PNG: free alpha 255, occupied 217
       const col = isFree ? theme.free : theme.wall
       d[i] = col[0]; d[i + 1] = col[1]; d[i + 2] = col[2]; d[i + 3] = col[3]
-      if (isFree) mask.data[i + 3] = 255
+      if (isFree) { mask.data[i + 3] = 255; lookup[i >> 2] = 1 }
     }
+    freeMask.current = { data: lookup, meta }
+    plume.current.setMask(freeMask.current)
     g.putImageData(px, 0, 0)
     occ.current = c
     const mc = document.createElement('canvas')
@@ -127,6 +133,7 @@ export default function MapView(props: RendererProps) {
     let raf = 0
     let cam: Camera | null = null
     let marker: { x: number; y: number; r: number; text: string } | null = null // next-sample marker on screen, for its tooltip
+    let lastFrame = 0
     const shown = new Map<string, { x: number; y: number; h: number }>()
     const seenAlerts = new Set<string>()
     const rings: { x: number; y: number; t0: number }[] = []
@@ -237,6 +244,41 @@ export default function MapView(props: RendererProps) {
         ctx.restore()
       }
 
+      // live plume: instant bloom at the wearer for an elevated reading, and the long-lived
+      // particle cloud; both clipped to scanned free space, drawn additively over the field
+      if (P.layers.gas && mapRect && free.current) {
+        const pl = plume.current
+        const wall = Date.now()
+        const dt = lastFrame ? (now - lastFrame) / 1000 : 0
+        pl.sync(P.trail, P.until ?? wall)
+        const fc = P.gas?.forecast
+        const grad = fc && fc.mean.length ? (x: number, y: number): [number, number] | null => {
+          const m1 = fc.mean[0]
+          const cc = Math.floor((x - fc.x0) / fc.res), rr = Math.floor((y - fc.y0) / fc.res)
+          if (cc < 1 || rr < 1 || cc >= fc.cols - 1 || rr >= fc.rows - 1) return null
+          const i = rr * fc.cols + cc
+          const gx = m1[i + 1] - m1[i - 1], gy = m1[i + fc.cols] - m1[i - fc.cols]
+          if (Number.isNaN(gx) || Number.isNaN(gy)) return null
+          const n = Math.hypot(gx, gy)
+          return n > 1e-3 ? [gx / n, gy / n] : null
+        } : null
+        if (P.until == null) pl.step(dt, grad, wall)
+        if (layer.width !== canvas.width || layer.height !== canvas.height) { layer.width = canvas.width; layer.height = canvas.height }
+        lctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        lctx.globalCompositeOperation = 'source-over'
+        lctx.clearRect(0, 0, w, h)
+        pl.draw(lctx, sx, sy, c.scale, P.until ?? wall)
+        lctx.globalCompositeOperation = 'destination-in'
+        lctx.imageSmoothingEnabled = false
+        lctx.drawImage(free.current, ...mapRect)
+        ctx.save()
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.globalCompositeOperation = 'lighter'
+        ctx.drawImage(layer, 0, 0)
+        ctx.restore()
+      }
+      lastFrame = now
+
       // predicted areas: striped band fills + thin contours, plus likely sources
       const pr = predicted.current
       if (P.layers.gas && pr) {
@@ -296,19 +338,32 @@ export default function MapView(props: RendererProps) {
       }
       // where a reading would help most (GP variance), from where the selected wearer stands
       const nx = P.gas && P.horizon == null ? chooseNext(P.gas.next, me ?? P.pose, P.gas.field) : null
-      if (P.layers.next && nx && P.gas) {
-        const x = sx(nx.x), y = sy(nx.y), r = Math.max(8, nx.r * c.scale)
-        marker = { x, y, r, text: explainNext(nx, P.gas.field!, me ?? P.pose) }
+      const mv = P.layers.next && P.gas && P.horizon == null ? predictMovement(P.gas, me ?? P.pose, nx) : null
+      if (mv && P.gas) {
+        // the haze travels from beside the wearer to where the gas is heading, on a 1.5 s cycle
+        const from = me ?? P.pose
+        const f = (now % 1500) / 1500
+        const ease = 1 - (1 - f) * (1 - f)
+        let x0 = mv.x, y0 = mv.y
+        if (from) {
+          const dx = mv.x - from.x, dy = mv.y - from.y, len = Math.hypot(dx, dy)
+          if (len > 1e-3) { const k = Math.min(1.5, len * 0.4) / len; x0 = from.x + dx * k; y0 = from.y + dy * k }
+        }
+        const cxm = x0 + (mv.x - x0) * (0.25 + 0.75 * ease), cym = y0 + (mv.y - y0) * (0.25 + 0.75 * ease)
+        const x = sx(cxm), y = sy(cym), r = Math.max(10, mv.r * c.scale)
+        const a = 0.6 * (0.7 + 0.3 * (1 - f)) // brightest as it sets off, settling as it arrives
+        marker = { x: sx(mv.x), y: sy(mv.y), r, text: explainMovement(mv, null).join(' · ') }
         ctx.save()
-        // a soft red haze over the region: strongest at the point, gone at the region's edge
         const g = ctx.createRadialGradient(x, y, 0, x, y, r)
-        g.addColorStop(0, hexA(T.next, 0.25)); g.addColorStop(0.55, hexA(T.next, 0.12)); g.addColorStop(1, hexA(T.next, 0))
+        const red = '#ff2d3f' // unmistakably red at a glance, whatever the theme's accent
+        g.addColorStop(0, hexA(red, a)); g.addColorStop(0.5, hexA(red, a * 0.5)); g.addColorStop(1, hexA(red, 0))
         ctx.fillStyle = g
         ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill()
         ctx.fillStyle = T.next
         ctx.font = '500 10px Inter, system-ui, sans-serif'
         ctx.textAlign = 'center'
-        ctx.fillText('gas movement prediction', x, y - r - 6)
+        ctx.letterSpacing = '0.08em' // small-caps style, like the rail captions
+        ctx.fillText('GAS MOVEMENT PREDICTION', sx(mv.x), sy(mv.y) - r - 6)
         ctx.restore()
       } else marker = null
 
@@ -433,7 +488,7 @@ export default function MapView(props: RendererProps) {
       if (e.target === canvas) { // the next-sample marker explains itself on hover
         const q = pt(e)
         const near = marker && Math.hypot(q.x - marker.x, q.y - marker.y) < marker.r
-        const tip = near ? `Gas movement prediction: ${marker!.text}` : ''
+        const tip = near ? `GAS MOVEMENT PREDICTION\n${marker!.text.split(' · ').join('\n')}` : ''
         if (canvas.title !== tip) canvas.title = tip
       }
       if (!drag || !cam) return

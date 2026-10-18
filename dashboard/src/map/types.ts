@@ -19,6 +19,7 @@ export type MapProps = {
   alerts: Alert[]
   threshold?: number
   voc?: number | null // current (or replayed) reading, for the marker on the colour scale
+  until?: number | null // replay position (ms); null/undefined = live. The plume rebuilds from the trail at this time.
   follow: boolean // camera tracks the selected wearer
   layers: Layers
   only: string | null // show just this wearer (others dimmed), null = everyone

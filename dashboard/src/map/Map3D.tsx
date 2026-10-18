@@ -3,7 +3,7 @@
 // for predicted gas in the air, including in rooms nobody has entered yet.
 // Two cameras: overhead orbit, and first person at the selected wearer's eyes.
 // World axes: map x -> x, map y -> -z, height -> y.
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { bandImage, isolines, strokeIsolines } from '../lib/heatImage'
@@ -11,7 +11,8 @@ import { gasCloud, predict, PRIOR_WEIGHT, type GasCloud } from '../lib/predict'
 import type { Source } from '../lib/sourceModel'
 import { SCALE } from '../lib/colors'
 import { drawMark, markKind, type Mark } from '../lib/marks'
-import { chooseNext, type NextSample } from '../lib/nextSample'
+import { chooseNext, predictMovement, type Movement } from '../lib/nextSample'
+import { Plume } from '../lib/plume'
 import { uncertaintyImage } from '../lib/uncertainty'
 import { DEFAULT_WEARER, type MapMeta } from '../lib/types'
 import { drawHardHat } from './theme'
@@ -98,7 +99,8 @@ type Api = {
   setFloor: (canvas: HTMLCanvasElement, meta: MapMeta) => void
   setGas: (cloud: GasCloud) => void
   setSources: (sources: Source[]) => void
-  setNext: (n: NextSample | null) => void
+  setNext: (n: { mv: Movement; from: { x: number; y: number } | null } | null) => void
+  setPlumeMask: (m: { data: Uint8Array; meta: MapMeta }) => void
   setMarks: (marks: Mark[]) => void
   setTheme: () => void
   recenter: () => void
@@ -110,6 +112,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
   const known = useRef<Box | null>(null) // what has been mapped so far, for the default view
   p.current = props
   const api = useRef<Api | null>(null)
+  const [ghostOn, setGhostOn] = useState(false)
 
   // scene setup, once
   useEffect(() => {
@@ -158,6 +161,15 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     const gas = new THREE.Points(new THREE.BufferGeometry(), gasMat)
     gas.frustumCulled = false
     scene.add(gas)
+    // live cloud: the blooms and particles the 2D map shows, as puffs around sensor height
+    const liveMat = gasMat.clone()
+    liveMat.blending = THREE.AdditiveBlending
+    const liveGas = new THREE.Points(new THREE.BufferGeometry(), liveMat)
+    liveGas.frustumCulled = false
+    liveGas.renderOrder = 3
+    scene.add(liveGas)
+    const plume = new Plume()
+    let plumeAt = 0
 
     // likely sources: dashed-looking rings on the floor
     const sourceGroup = new THREE.Group()
@@ -175,7 +187,16 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       g.fillStyle = grad; g.fillRect(0, 0, 128, 128)
       const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t
     })()
-    const nextMat = new THREE.MeshBasicMaterial({ map: nextTex, transparent: true, depthWrite: false, side: THREE.DoubleSide })
+    const nextMat = new THREE.MeshBasicMaterial({ map: nextTex, color: 0xff2d3f, transparent: true, depthTest: true, depthWrite: false, side: THREE.DoubleSide })
+    nextGroup.renderOrder = 4 // after the walls, so solid geometry hides it
+    // the forming cloud: a low red puff stack that travels toward the predicted spot (additive, wall-occluded)
+    const puffMat = gasMat.clone()
+    puffMat.blending = THREE.AdditiveBlending
+    const puff = new THREE.Points(new THREE.BufferGeometry(), puffMat)
+    puff.frustumCulled = false
+    puff.renderOrder = 4
+    scene.add(puff)
+    let moveTo: { mv: Movement; from: { x: number; y: number } | null } | null = null
 
     // commander's annotations: always-on-top pins, constant screen size
     const markGroup = new THREE.Group()
@@ -246,6 +267,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       nextMat.color.set(T.next)
       gasMat.blending = T.glow3d === 'additive' ? THREE.AdditiveBlending : THREE.NormalBlending
       gasMat.needsUpdate = true
+      liveMat.needsUpdate = true; puffMat.needsUpdate = true
     }
     setTheme()
 
@@ -368,32 +390,77 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       },
       setNext(n) {
         for (const c of [...nextGroup.children]) { nextGroup.remove(c); (c as THREE.Mesh).geometry.dispose() }
-        if (!n) return
+        moveTo = n
+        if (!n) { puff.geometry.dispose(); puff.geometry = new THREE.BufferGeometry(); return }
+        const { mv } = n
         // a soft red disc on the floor over the region
-        const disc = new THREE.Mesh(new THREE.PlaneGeometry(n.r * 2, n.r * 2), nextMat)
+        const disc = new THREE.Mesh(new THREE.PlaneGeometry(mv.r * 2, mv.r * 2), nextMat)
         disc.rotation.x = -Math.PI / 2
-        disc.position.set(n.x, 0.04, -n.y)
+        disc.position.set(mv.x, 0.04, -mv.y)
         nextGroup.add(disc)
+        // the puff: a stack of red points, positioned each frame as it travels
+        const n0 = 36
+        const pos = new Float32Array(n0 * 3), col = new Float32Array(n0 * 3), alp = new Float32Array(n0), ph = new Float32Array(n0)
+        const hash = (i: number, k: number) => { const x = Math.sin(i * 12.9898 + k * 78.233) * 43758.5453; return x - Math.floor(x) }
+        for (let i = 0; i < n0; i++) {
+          const ang = hash(i, 1) * Math.PI * 2, rad = Math.sqrt(hash(i, 2)) * mv.r * 0.7
+          pos[i * 3] = Math.cos(ang) * rad; pos[i * 3 + 1] = 0.3 + hash(i, 3) * 1.1; pos[i * 3 + 2] = Math.sin(ang) * rad
+          col[i * 3] = 1; col[i * 3 + 1] = 0.18; col[i * 3 + 2] = 0.25
+          alp[i] = 0.55; ph[i] = hash(i, 4) * Math.PI * 2
+        }
+        const g = new THREE.BufferGeometry()
+        g.setAttribute('position', new THREE.BufferAttribute(pos, 3))
+        g.setAttribute('aColor', new THREE.BufferAttribute(col, 3))
+        g.setAttribute('aAlpha', new THREE.BufferAttribute(alp, 1))
+        g.setAttribute('aPhase', new THREE.BufferAttribute(ph, 1))
+        puff.geometry.dispose(); puff.geometry = g
       },
       setMarks(marks) {
-        for (const c of [...markGroup.children]) { markGroup.remove(c); (c as THREE.Sprite).material.dispose() }
+        for (const c of [...markGroup.children]) { markGroup.remove(c); ((c as THREE.Sprite).material as THREE.SpriteMaterial).dispose() }
         for (const m of marks) {
           const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: markTexture(m), depthTest: false, sizeAttenuation: false }))
-          sp.center.set(0.5, 1 - 16 / 56) // anchor on the disc, label hangs below
-          sp.scale.set(0.056, 0.039, 1)
-          sp.position.set(m.x, 0.3, -m.y)
-          sp.renderOrder = 9
+          sp.center.set(0.5, 0) // the pin's foot sits on the point
+          sp.position.set(m.x, 0.05, -m.y)
+          sp.renderOrder = 11
+          sp.userData.markSprite = true
           markGroup.add(sp)
         }
       },
+      setPlumeMask(m) { plume.setMask(m) },
       setTheme,
       recenter() {
         look = { yaw: 0, pitch: -0.12 }
+        if (ghost) { ghost = null; setGhostOn(false) }
         goal = defaultView()
         moved = false
         p.current.onMoved(false)
       },
     }
+
+    // ghost: a free camera in first person. WASD (B = back) moves, drag looks, C returns to the wearer.
+    let ghost: { pos: THREE.Vector3; yaw: number } | null = null
+    const keys = new Set<string>()
+    const typing = (e: KeyboardEvent) => { const t = e.target as HTMLElement | null; return !!t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) }
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (typing(e) || e.metaKey || e.ctrlKey || e.altKey) return
+      const k = e.key.toLowerCase()
+      if (['w', 'a', 's', 'd', 'b', 'q', 'e', 'shift', ' '].includes(k)) { keys.add(k); if (k === ' ') e.preventDefault() }
+    }
+    const onKeyUp = (e: KeyboardEvent) => keys.delete(e.key.toLowerCase())
+    const onBlur = () => keys.clear()
+    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    const passable = (x: number, y: number) => {
+      const m = p.current.meta, data = pixels.current
+      if (!m || !data) return true
+      const top = m.origin[1] + m.h * m.res
+      const cc = Math.floor((x - m.origin[0]) / m.res), rr = Math.floor((top - y) / m.res)
+      if (cc < 0 || rr < 0 || cc >= m.w || rr >= m.h) return false
+      const a = data[(rr * m.w + cc) * 4 + 3]
+      return a === 0 || a > 240
+    }
+    let lastTick = performance.now()
 
     let raf = 0
     let alertKey = ''
@@ -478,6 +545,10 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       sourceGroup.visible = P.layers.source
       nextGroup.visible = P.layers.next
       markGroup.visible = P.layers.marks
+      {
+        const sm = (0.16 * 2) / size.h * 80 // ~80 px tall whatever the viewport
+        for (const c of markGroup.children) (c as THREE.Sprite).scale.set(sm * (160 / 112), sm, 1)
+      }
 
       // walls rise in first person, and the lens widens
       wallGroup.scale.y += ((fp ? WALL_FULL : WALL_OVERHEAD) - wallGroup.scale.y) * 0.08
@@ -492,8 +563,38 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         else look = { yaw: 0, pitch: -0.12 }
       }
 
+      const tnow = performance.now()
+      const dt = Math.min(0.1, (tnow - lastTick) / 1000)
+      lastTick = tnow
+
       const me = people.get(P.selected)
-      if (fp && me?.shown) {
+      // ghost: the first key press detaches the camera from the wearer
+      if (fp && !ghost && me?.shown && ['w', 'a', 's', 'd', 'b'].some((k) => keys.has(k))) {
+        ghost = { pos: new THREE.Vector3(me.shown.x, 1.2, me.shown.z), yaw: me.heading + look.yaw }
+        look = { yaw: 0, pitch: look.pitch }
+        setGhostOn(true)
+      }
+      if (!fp && ghost) { ghost = null; setGhostOn(false) }
+      if (fp && ghost) {
+        const yaw = ghost.yaw + look.yaw
+        const fwd = (keys.has('w') ? 1 : 0) - (keys.has('s') || keys.has('b') ? 1 : 0)
+        const side = (keys.has('d') ? 1 : 0) - (keys.has('a') ? 1 : 0)
+        const up = (keys.has('e') || keys.has(' ') ? 1 : 0) - (keys.has('q') || keys.has('shift') ? 1 : 0)
+        const v = 1.5 * dt
+        // world: x east, z = -north; forward along yaw, right is yaw - 90°
+        const dx = (Math.cos(yaw) * fwd + Math.sin(yaw) * side) * v
+        const dzn = (Math.sin(yaw) * fwd - Math.cos(yaw) * side) * v // in map y (north)
+        const gx = ghost.pos.x, gy = -ghost.pos.z
+        if (passable(gx + dx, gy + dzn)) { ghost.pos.x += dx; ghost.pos.z -= dzn }
+        else if (passable(gx + dx, gy)) ghost.pos.x += dx
+        else if (passable(gx, gy + dzn)) ghost.pos.z -= dzn
+        ghost.pos.y = Math.max(0.4, Math.min(2.4, ghost.pos.y + up * v))
+        const pitch = look.pitch
+        eye.position.copy(ghost.pos)
+        eye.lookAt(ghost.pos.x + Math.cos(yaw) * Math.cos(pitch), ghost.pos.y + Math.sin(pitch), ghost.pos.z - Math.sin(yaw) * Math.cos(pitch))
+        camera.position.lerp(eye.position, 0.3)
+        camera.quaternion.slerp(eye.quaternion, 0.2)
+      } else if (fp && me?.shown) {
         // eyes at head height, looking along the heading (+ drag offset); head pitch/roll follow the IMU, damped
         const yaw = me.heading + look.yaw
         const pitch = look.pitch + me.pitch * 0.6
@@ -519,6 +620,41 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         controls.update()
       }
 
+      // live cloud from the plume (rebuilt a few times a second), and the travelling red puff
+      if (P.layers.gas && P.meta) {
+        const wall = Date.now()
+        plume.sync(P.trail, P.until ?? wall)
+        if (P.until == null) plume.step(dt, null, wall)
+        if (tnow - plumeAt > 250) {
+          plumeAt = tnow
+          const snap = plume.snapshot(P.until ?? wall)
+          const g = new THREE.BufferGeometry()
+          g.setAttribute('position', new THREE.BufferAttribute(snap.positions, 3))
+          g.setAttribute('aColor', new THREE.BufferAttribute(snap.colors, 3))
+          g.setAttribute('aAlpha', new THREE.BufferAttribute(snap.alphas, 1))
+          g.setAttribute('aPhase', new THREE.BufferAttribute(snap.phases, 1))
+          liveGas.geometry.dispose(); liveGas.geometry = g
+        }
+        liveGas.visible = true
+      } else liveGas.visible = false
+      if (moveTo) {
+        const { mv, from } = moveTo
+        const f = ((tnow % 1500) / 1500), ease = 1 - (1 - f) * (1 - f)
+        let x0 = mv.x, y0 = mv.y
+        if (from) {
+          const ddx = mv.x - from.x, ddy = mv.y - from.y, len = Math.hypot(ddx, ddy)
+          if (len > 1e-3) { const k = Math.min(1.5, len * 0.4) / len; x0 = from.x + ddx * k; y0 = from.y + ddy * k }
+        }
+        puff.position.set(x0 + (mv.x - x0) * (0.25 + 0.75 * ease), 0, -(y0 + (mv.y - y0) * (0.25 + 0.75 * ease)))
+        puff.visible = true
+      } else puff.visible = false
+      for (const m of [liveMat, puffMat]) {
+        m.uniforms.uTime.value = (performance.now() - t0) / 1000
+        m.uniforms.uScale.value = (GAS_SIZE * size.h * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360))
+        m.uniforms.uMaxSize.value = 48 * renderer.getPixelRatio()
+        m.uniforms.uAlpha.value = 1
+      }
+
       gasMat.uniforms.uTime.value = (performance.now() - t0) / 1000
       gasMat.uniforms.uScale.value = (GAS_SIZE * size.h * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360))
       gasMat.uniforms.uMaxSize.value = 48 * renderer.getPixelRatio()
@@ -529,6 +665,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
 
     return () => {
       cancelAnimationFrame(raf)
+      window.removeEventListener('keydown', onKeyDown); window.removeEventListener('keyup', onKeyUp); window.removeEventListener('blur', onBlur)
       ro.disconnect()
       controls.removeEventListener('start', onStart)
       controls.dispose()
@@ -564,6 +701,9 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     const data = g.getImageData(0, 0, meta.w, meta.h).data
     pixels.current = data
     known.current = knownBounds((i) => data[i * 4 + 3], meta)
+    const lookup = new Uint8Array(meta.w * meta.h)
+    for (let i = 0; i < lookup.length; i++) if (data[i * 4 + 3] > 240) lookup[i] = 1
+    api.current.setPlumeMask({ data: lookup, meta })
     api.current.setWalls(wallRects((i) => data[i * 4 + 3], meta.w, meta.h), meta)
   }, [image, meta])
 
@@ -612,12 +752,18 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
   // next-best sample: re-pick when the model or the selected wearer's position changes
   const { gas, pose, horizon } = props
   useEffect(() => {
-    api.current?.setNext(gas && horizon == null ? chooseNext(gas.next, pose, gas.field) : null)
+    const mv = gas && horizon == null ? predictMovement(gas, pose, chooseNext(gas.next, pose, gas.field)) : null
+    api.current?.setNext(mv ? { mv, from: pose } : null)
   }, [gas, pose, horizon])
 
   useEffect(() => { api.current?.setMarks(marks) }, [marks])
   useEffect(() => { api.current?.setTheme() }, [theme])
   useEffect(() => { if (recenter) api.current?.recenter() }, [recenter])
 
-  return <div ref={hostRef} className={`map-3d${props.onPick ? ' picking' : ''}`} />
+  return (
+    <>
+      <div ref={hostRef} className={`map-3d${props.onPick ? ' picking' : ''}`} />
+      {ghostOn && <div className="ghost-hint">Ghost · W A S D to move · press C to return</div>}
+    </>
+  )
 }

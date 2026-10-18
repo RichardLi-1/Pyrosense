@@ -33,27 +33,31 @@ export function levelRanges(): Record<Level, string> {
 }
 
 /**
- * Thermal ramp, in band space: 0–0.33 good (deep navy → royal blue), 0.33–0.55 moderate
- * (pale blue → amber), 0.55–0.78 poor (red-orange → orange), 0.78–1 hazardous (yellow → white-hot).
- * Cool colours are calm air; warmth and brightness are the gas.
+ * Thermal ramp, in band space, so the map agrees with the legend: 0–0.33 good (navy → blue →
+ * teal), 0.33–0.55 moderate (yellow), 0.55–0.78 poor (orange), 0.78–1 hazardous (red),
+ * saturating at 1.3× the alert threshold. Cool colours are calm air; yellow is the first
+ * thing to notice, red means leave.
  */
 const STOPS: [number, [number, number, number]][] = [
   [0.00, [10, 16, 48]],
-  [0.16, [24, 50, 128]],
-  [0.33, [47, 111, 224]],
-  [0.46, [146, 188, 236]],
-  [0.55, [240, 170, 74]],
-  [0.67, [226, 84, 32]],
-  [0.78, [255, 138, 31]],
-  [0.90, [255, 210, 60]],
-  [1.00, [255, 247, 216]],
+  [0.16, [27, 58, 153]],
+  [0.32, [47, 181, 200]],
+  [0.34, [255, 214, 64]],
+  [0.55, [245, 176, 0]],
+  [0.57, [255, 138, 31]],
+  [0.78, [230, 83, 31]],
+  [0.80, [224, 36, 36]],
+  [1.00, [255, 64, 64]],
 ]
 const SEG: [number, number, number, number] = [0, 0.33, 0.55, 0.78] // band starts in ramp space
+
+/** Top of the ramp: readings beyond this are all the same red. */
+export const rampMax = (scale = SCALE) => 1.3 * scale.bands[2]
 
 /** Position of a reading on the ramp (0–1): bands get fixed widths so the look is unit-independent. */
 export function rampT(v: number, scale = SCALE): number {
   const [a, b, c] = scale.bands
-  const edges = [0, a, b, c, scale.max]
+  const edges = [0, a, b, c, rampMax(scale)]
   const stops = [...SEG, 1]
   if (v <= 0) return 0
   for (let i = 0; i < 4; i++) {

@@ -49,7 +49,7 @@ export default function Focus({ s, setUntil, view, setView, select, setSource, g
   return (
     <div className="design d-focus">
       <MapStage theme={THEMES.focus} meta={s.meta} image={s.image} heat={s.heat} trail={s.trail} pose={s.pose} poses={s.poses} selected={s.selected!}
-                alerts={s.alerts} threshold={s.threshold} voc={s.voc} follow={view.follow} layers={view.layers} only={view.only} crew={s.crew}
+                alerts={s.alerts} threshold={s.threshold} voc={s.voc} until={s.until} follow={view.follow} layers={view.layers} only={view.only} crew={s.crew}
                 marks={marks} onPick={armed ? onPick : null} setLayer={setLayer} setFollow={setFollow}
                 gas={gas} inset={{ left: 390, top: 88, right: 104, bottom: scrubber ? 124 : 72 }} />
       <Waiting s={s} />

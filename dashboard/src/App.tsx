@@ -68,7 +68,7 @@ function Dashboard({ source, setSource }: { source: DataSource; setSource: (kind
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const gas = useGasModel(s.meta, s.image, s.heat, needsGasModel(view.layers))
+  const gas = useGasModel(s.meta, s.image, s.heat, needsGasModel(view.layers), s.reviewing?.session ?? `live:${s.session}`)
   const Design = DESIGNS[design]
   const props: DesignProps = useMemo(() => ({ s, setUntil, loadSummary, view, setView, select, gas, setSource, scans }),
                                      [s, setUntil, loadSummary, view, select, gas, setSource, scans])

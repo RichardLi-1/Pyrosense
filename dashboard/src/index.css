@@ -109,7 +109,7 @@ a.brand { color: inherit; text-decoration: none; cursor: pointer; pointer-events
   background: radial-gradient(1200px 800px at 65% 45%, #0d1118 0%, #07090d 70%);
 }
 .f-top { position: absolute; z-index: 4; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: center; padding: 14px 28px; }
-.f-reading { position: absolute; left: 28px; top: 50%; transform: translateY(-52%); display: flex; flex-direction: column; gap: 10px; pointer-events: none; --rail-size: 48px; width: 340px; }
+.f-reading { position: absolute; left: 14px; top: 50%; padding: 18px 14px 16px; border-radius: 18px; background: color-mix(in srgb, var(--bg) 62%, transparent); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); transform: translateY(-52%); display: flex; flex-direction: column; gap: 10px; pointer-events: none; --rail-size: 48px; width: 368px; }
 /* one size for every number in the rail: the hero and the tiles read as equals */
 .f-reading .reading-value, .f-reading .tile-value { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: var(--rail-size); font-weight: 300; letter-spacing: -0.04em; line-height: 0.95; }
 .f-reading .tiles { grid-template-columns: repeat(2, 1fr); gap: 12px 20px; margin-top: 2px; }
@@ -207,7 +207,7 @@ a.brand { color: inherit; text-decoration: none; cursor: pointer; pointer-events
 .tile--warn .tile-value { color: var(--alert); }
 .tile--next .tile-value { color: var(--good); }
 .tiles-note { grid-column: 1 / -1; font-size: 11px; color: var(--muted); }
-.tile-note { font-size: 11px; line-height: 1.35; color: var(--muted); max-width: 150px; }
+.tile-note { font-size: 11px; line-height: 1.4; color: var(--muted); max-width: 150px; white-space: pre-line; }
 .tile:has(.tile-note) { grid-column: 1 / -1; }
 .tile:has(.tile-note) .tile-note { max-width: 330px; }
 .tiles-warm { color: var(--moderate); }
@@ -359,3 +359,7 @@ a.brand { color: inherit; text-decoration: none; cursor: pointer; pointer-events
 .exposure-dot { fill: var(--signal); stroke: var(--pop); stroke-width: 2; }
 .exposure-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--muted); margin-top: 6px; }
 .exposure-empty { font-size: 13px; }
+
+/* ghost free-look hint (first person, camera detached from the wearer) */
+.ghost-hint { position: absolute; left: 50%; top: 104px; transform: translateX(-50%); z-index: 4; padding: 8px 14px; border-radius: 999px;
+  font-size: 12px; color: var(--text); background: color-mix(in srgb, var(--pop) 80%, transparent); border: 1px solid var(--line); backdrop-filter: blur(8px); pointer-events: none; }
