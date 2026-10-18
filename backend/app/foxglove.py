@@ -70,8 +70,10 @@ class FoxgloveClient:
             backoff = min(self.max_backoff, backoff * 2)
 
     async def _session(self) -> None:
+        # Generous keepalive: over a phone hotspot the Pi link stalls for 20-40 s at a time, and every
+        # drop costs a resubscribe plus a full point-cloud backlog. Only give up after ~90 s of silence.
         async with websockets.connect(self.url, subprotocols=SUBPROTOCOLS, max_size=None,
-                                      ping_interval=20, ping_timeout=20) as ws:
+                                      ping_interval=30, ping_timeout=90, open_timeout=30) as ws:
             self.connected = True
             self._subs.clear()
             log.info("connected to %s (%s)", self.url, ws.subprotocol)
