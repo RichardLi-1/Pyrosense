@@ -598,7 +598,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
           // bloom splats, clipped to the scanned floor
           bloomCtx.globalCompositeOperation = 'source-over'
           bloomCtx.clearRect(0, 0, m.w, m.h)
-          plume.draw(bloomCtx, px, py, 1 / m.res, P.until ?? wall)
+          plume.draw(bloomCtx, px, py, 1 / m.res, P.until ?? wall, { particles: false }) // splats only: no per-particle dots in 3D
           floorCtx.globalCompositeOperation = 'source-atop'
           floorCtx.drawImage(bloomCanvas, 0, 0)
           floorCtx.globalCompositeOperation = 'source-over'
@@ -610,7 +610,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
           g.setAttribute('aPhase', new THREE.BufferAttribute(Float32Array.from(hp), 1))
           liveGas.geometry.dispose(); liveGas.geometry = g
         }
-        liveGas.visible = P.layers.gas
+        liveGas.visible = false // per-point haze read as opaque discs; hidden until the draped field ships
       } else liveGas.visible = false
       liveMat.uniforms.uTime.value = (performance.now() - t0) / 1000
       liveMat.uniforms.uScale.value = (HAZE_SIZE * size.h * renderer.getPixelRatio()) / (2 * Math.tan((camera.fov * Math.PI) / 360))
