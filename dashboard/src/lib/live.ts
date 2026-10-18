@@ -2,6 +2,8 @@
 import type { Alert, DataSource, HeatCell, LiveEvent, MapMeta, RestartResult, SaveResult, ScanSession, Summary, TrailPoint, WarningsResponse } from './types'
 
 const api = (path: string) => `/api${path}`
+/** A backend-relative path (as the API hands it out, e.g. "/warnings/3/audio.mp3") as a browser URL behind the /api proxy. */
+export const apiUrl = (path: string) => (path.startsWith('/api') || /^(https?:|data:|blob:)/.test(path) ? path : api(path))
 
 async function json<T>(path: string): Promise<T> {
   const r = await fetch(api(path))
@@ -58,7 +60,7 @@ export function createLiveSource(): DataSource {
         img.onload = () => resolve(img)
         img.onerror = reject
         // the backend hands out /api-relative urls for the live map and the catalog alike
-        img.src = meta.url.startsWith('/api') || /^https?:/.test(meta.url) ? meta.url : api(meta.url)
+        img.src = apiUrl(meta.url)
       })
     },
 
