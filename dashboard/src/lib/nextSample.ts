@@ -12,7 +12,8 @@
 // outranks the same uncertainty in a dead end. Cells already well measured have a tiny sd
 // and drop out on their own; cells the GP can't reach (conf = 0) are excluded, because
 // they are not a "next" sample but an unexplored region — the map already shows those as
-// transparent. Candidates are the lattice points (1.6 m apart) with non-maximum suppression
+// transparent. Cells SLAM hasn't mapped as free are excluded too, so the target always lies
+// inside the map. Candidates are the lattice points (1.6 m apart) with non-maximum suppression
 // so the result is a handful of distinct regions, not one blob of neighbouring cells.
 import type { Field } from './gp'
 import { geodesic, lattice, LATTICE_M, type PassGrid } from './sourceModel'
@@ -70,6 +71,7 @@ export function nextSampleCandidates(g: PassGrid, field: Field, prob: SourceProb
 
 function cellScore(g: PassGrid, field: Field, prob: SourceProb | null, i: number): number {
   if (!g.pass[i]) return 0
+  if (g.known && !g.known[i]) return 0 // outside the SLAM map: not somewhere to walk to
   const conf = field.conf[i]
   if (!(conf > 0)) return 0 // out of the GP's reach: unexplored, not "next"
   const sd = field.sd[i]

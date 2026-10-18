@@ -9,7 +9,9 @@
 // best reduce the weighted squared error; strengths are non-negative least squares.
 // Runs in a worker (model.worker.ts); pure functions here so it's testable.
 
-export type PassGrid = { x0: number; y0: number; res: number; cols: number; rows: number; pass: Uint8Array }
+export type PassGrid = { x0: number; y0: number; res: number; cols: number; rows: number; pass: Uint8Array
+                         /** 1 where SLAM has mapped the cell as free; unknown cells are passable but not mapped. */
+                         known?: Uint8Array }
 export type Obs = { x: number; y: number; v: number; w: number; sd?: number }
 export type Source = { x: number; y: number; q: number }
 export type SourceModel = {
@@ -201,12 +203,13 @@ export function passGridFromAlpha(alpha: Uint8ClampedArray, meta: { origin: [num
   const k = Math.max(1, Math.round(res / meta.res))
   const cols = Math.ceil(meta.w / k), rows = Math.ceil(meta.h / k)
   const pass = new Uint8Array(cols * rows).fill(1)
+  const known = new Uint8Array(cols * rows)
   for (let py = 0; py < meta.h; py++) for (let px = 0; px < meta.w; px++) {
     const a = alpha[(py * meta.w + px) * 4 + 3]
-    if (a > 0 && a <= 240) { // occupied
-      const r = Math.floor((meta.h - 1 - py) / k), c = Math.floor(px / k)
-      pass[r * cols + c] = 0
-    }
+    if (a === 0) continue // unknown
+    const i = Math.floor((meta.h - 1 - py) / k) * cols + Math.floor(px / k)
+    if (a <= 240) pass[i] = 0 // occupied
+    else known[i] = 1 // free
   }
-  return { x0: meta.origin[0], y0: meta.origin[1], res: k * meta.res, cols, rows, pass }
+  return { x0: meta.origin[0], y0: meta.origin[1], res: k * meta.res, cols, rows, pass, known }
 }

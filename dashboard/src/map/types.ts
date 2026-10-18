@@ -1,6 +1,8 @@
 import type { GasModel } from '../lib/gasModel'
 import type { SourceModel } from '../lib/sourceModel'
+import type { Mark } from '../lib/marks'
 import type { Alert, HeatCell, MapMeta, Pose, TrailPoint } from '../lib/types'
+import type { Layers } from './layers'
 import type { MapTheme } from './theme'
 
 export type Inset = { top?: number; right?: number; bottom?: number; left?: number }
@@ -17,9 +19,13 @@ export type MapProps = {
   alerts: Alert[]
   threshold?: number
   voc?: number | null // current (or replayed) reading, for the marker on the colour scale
-  follow: boolean
-  showHeat: boolean
-  showTrail: boolean
+  follow: boolean // camera tracks the selected wearer
+  layers: Layers
+  only: string | null // show just this wearer (others dimmed), null = everyone
+  crew: string[] // for FF-n labels
+  marks: Mark[]
+  /** Set while placing an annotation: a click on the map reports the world point (metres). */
+  onPick?: ((x: number, y: number) => void) | null
   /** Screen-space insets (px) the camera keeps clear for overlaid UI. */
   inset?: Inset
   /** The gas model (field, source posterior, forecast, next-sample candidates), computed once at the top level. */

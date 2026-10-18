@@ -9,7 +9,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { bandImage, isolines, strokeIsolines } from '../lib/heatImage'
 import { gasCloud, predict, PRIOR_WEIGHT, type GasCloud } from '../lib/predict'
 import type { Source } from '../lib/sourceModel'
+import { drawMark, markKind, type Mark } from '../lib/marks'
 import { chooseNext, type NextSample } from '../lib/nextSample'
+import { uncertaintyImage } from '../lib/uncertainty'
 import { DEFAULT_WEARER, type MapMeta } from '../lib/types'
 import { drawHardHat } from './theme'
 import { TRAIL_S, crewColor, growBox, insets, type RendererProps, knownBounds, type Box } from './types'
@@ -96,6 +98,7 @@ type Api = {
   setGas: (cloud: GasCloud) => void
   setSources: (sources: Source[]) => void
   setNext: (n: NextSample | null) => void
+  setMarks: (marks: Mark[]) => void
   setTheme: () => void
   recenter: () => void
 }
@@ -163,6 +166,24 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     const nextGroup = new THREE.Group()
     scene.add(nextGroup)
     const nextMat = new THREE.LineDashedMaterial({ dashSize: 0.08, gapSize: 0.1, transparent: true, opacity: 0.95 })
+
+    // commander's annotations: always-on-top pins, constant screen size
+    const markGroup = new THREE.Group()
+    scene.add(markGroup)
+    const markTex = new Map<string, THREE.CanvasTexture>()
+    const markTexture = (m: Mark) => {
+      let t = markTex.get(m.kind)
+      if (t) return t
+      const c = document.createElement('canvas')
+      c.width = 160; c.height = 112
+      const g = c.getContext('2d')!
+      g.scale(2, 2)
+      drawMark(g, m, 40, 16, 13, markKind(m.kind).label)
+      t = new THREE.CanvasTexture(c)
+      t.colorSpace = THREE.SRGBColorSpace
+      markTex.set(m.kind, t)
+      return t
+    }
 
     // wearers, created as they appear
     const people = new Map<string, Person>()
@@ -270,6 +291,23 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     window.addEventListener('pointermove', onMove)
     window.addEventListener('pointerup', onUp)
 
+    // a click (not a drag) while placing an annotation: where it hits the floor
+    let press: { x: number; y: number } | null = null
+    const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), hit = new THREE.Vector3()
+    const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+    const onPress = (e: PointerEvent) => { press = { x: e.clientX, y: e.clientY } }
+    const onRelease = (e: PointerEvent) => {
+      const pick = p.current.onPick
+      if (!press || !pick || Math.hypot(e.clientX - press.x, e.clientY - press.y) > 5) { press = null; return }
+      press = null
+      const r = renderer.domElement.getBoundingClientRect()
+      ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1)
+      ray.setFromCamera(ndc, camera)
+      if (ray.ray.intersectPlane(ground, hit)) pick(hit.x, -hit.z)
+    }
+    renderer.domElement.addEventListener('pointerdown', onPress)
+    renderer.domElement.addEventListener('pointerup', onRelease)
+
     api.current = {
       setWalls(rects, m) {
         for (const c of [...wallGroup.children]) { wallGroup.remove(c); (c as THREE.InstancedMesh).dispose() }
@@ -331,6 +369,17 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         line.computeLineDistances()
         nextGroup.add(line, new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(cross), nextMat))
       },
+      setMarks(marks) {
+        for (const c of [...markGroup.children]) { markGroup.remove(c); (c as THREE.Sprite).material.dispose() }
+        for (const m of marks) {
+          const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: markTexture(m), depthTest: false, sizeAttenuation: false }))
+          sp.center.set(0.5, 1 - 16 / 56) // anchor on the disc, label hangs below
+          sp.scale.set(0.056, 0.039, 1)
+          sp.position.set(m.x, 0.3, -m.y)
+          sp.renderOrder = 9
+          markGroup.add(sp)
+        }
+      },
       setTheme,
       recenter() {
         look = { yaw: 0, pitch: -0.12 }
@@ -368,26 +417,30 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
         pr.group.rotation.y = pr.heading // local +x = facing direction
         pr.body.rotation.set(pr.roll, 0, pr.pitch, 'YXZ') // pitch forward = rotate about local z
         const sel = id === P.selected
+        const dim = P.only != null && id !== P.only
+        pr.badge.material.opacity = dim ? 0.3 : 1
+        pr.badge.material.transparent = true
         pr.group.visible = !(fp && sel)
         const s = sel ? 0.046 : 0.036
         pr.badge.scale.set(s, s, 1)
         const pulse = (performance.now() % 2200) / 2200
         pr.ring.scale.setScalar(sel ? 1 + pulse * 1.6 : 1)
-        ;(pr.ring.material as THREE.MeshBasicMaterial).opacity = sel ? 1 - pulse : 0.5
+        ;(pr.ring.material as THREE.MeshBasicMaterial).opacity = dim ? 0.15 : sel ? 1 - pulse : 0.5
       }
       for (const [id, pr] of people) if (!live.has(id)) pr.group.visible = false
 
       // trails, per wearer (rebuilt when they change)
-      const tk = P.showTrail ? `${P.trail.length}:${P.trail.at(-1)?.ts}:${T.trail}:${P.poses.length}` : 'off'
+      const tk = P.layers.paths ? `${P.trail.length}:${P.trail.at(-1)?.ts}:${T.trail}:${P.poses.length}:${P.only}` : 'off'
       if (tk !== trailKey) {
         trailKey = tk
         const tEnd = Date.parse(P.trail.at(-1)?.ts ?? '0')
         const pos: number[] = [], col: number[] = []
         const last = new Map<string, { x: number; y: number }>()
         const c = new THREE.Color()
-        if (P.showTrail) for (const t of P.trail) {
+        if (P.layers.paths) for (const t of P.trail) {
           if (Date.parse(t.ts) < tEnd - TRAIL_S * 1000) continue
           const id = t.wearer ?? DEFAULT_WEARER
+          if (P.only && id !== P.only) continue
           const prev = last.get(id)
           last.set(id, t)
           if (!prev) continue
@@ -404,18 +457,21 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       }
 
       // alert markers
-      const ak = P.alerts.map((a) => a.ts).join()
+      const shownAlerts = P.layers.alerts ? P.alerts.filter((a) => !P.only || !a.wearer || a.wearer === P.only) : []
+      const ak = shownAlerts.map((a) => a.ts).join()
       if (ak !== alertKey) {
         alertKey = ak
         alertGroup.clear()
-        for (const a of P.alerts) {
+        for (const a of shownAlerts) {
           const m = new THREE.Mesh(alertGeo, alertMat)
           m.position.set(a.x, 0.025, -a.y)
           alertGroup.add(m)
         }
       }
-      gas.visible = P.showHeat
-      sourceGroup.visible = P.showHeat
+      gas.visible = P.layers.gas
+      sourceGroup.visible = P.layers.source
+      nextGroup.visible = P.layers.next
+      markGroup.visible = P.layers.marks
 
       // walls rise in first person, and the lens widens
       wallGroup.scale.y += ((fp ? WALL_FULL : WALL_OVERHEAD) - wallGroup.scale.y) * 0.08
@@ -471,6 +527,9 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       controls.removeEventListener('start', onStart)
       controls.dispose()
       renderer.domElement.removeEventListener('pointerdown', onDown)
+      renderer.domElement.removeEventListener('pointerdown', onPress)
+      renderer.domElement.removeEventListener('pointerup', onRelease)
+      for (const t of markTex.values()) t.dispose()
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       scene.traverse((o) => {
@@ -485,7 +544,8 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     }
   }, [])
 
-  const { image, meta, theme, heat, recenter, model } = props
+  const { image, meta, theme, heat, recenter, model, layers, marks } = props
+  const field = props.gas?.field ?? null
 
   // walls: from the occupancy image whenever the map changes
   const pixels = useRef<Uint8ClampedArray | null>(null)
@@ -517,7 +577,7 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     g.putImageData(img, 0, 0)
     const top = meta.origin[1] + meta.h * meta.res
     const bounds = { x0: meta.origin[0], y0: meta.origin[1], x1: meta.origin[0] + meta.w * meta.res, y1: top }
-    const pred = predict(heat, bounds, model)
+    const pred = layers.gas ? predict(heat, bounds, model) : null
     if (pred) {
       const band = bandImage(pred.grid, { prior: pred.prior, priorWeight: PRIOR_WEIGHT, predictedAlpha: 0.4 })
       g.globalCompositeOperation = 'source-atop' // only on scanned floor
@@ -533,9 +593,15 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
       }
       api.current.setGas(gasCloud(pred, notWall))
     }
+    const fog = layers.uncertainty && field ? uncertaintyImage(field) : null
+    if (fog) {
+      g.globalCompositeOperation = 'source-atop'
+      g.imageSmoothingEnabled = true
+      g.drawImage(fog.canvas, (fog.x0 - meta.origin[0]) / meta.res, (top - fog.y1) / meta.res, fog.w / meta.res, fog.h / meta.res)
+    }
     api.current.setSources(model?.sources ?? [])
     api.current.setFloor(c, meta)
-  }, [meta, theme, heat, model])
+  }, [meta, theme, heat, model, layers.gas, layers.uncertainty, field])
 
   // next-best sample: re-pick when the model or the selected wearer's position changes
   const { gas, pose, horizon } = props
@@ -543,8 +609,9 @@ export default function Map3D(props: RendererProps & { firstPerson: boolean }) {
     api.current?.setNext(gas && horizon == null ? chooseNext(gas.next, pose, gas.field) : null)
   }, [gas, pose, horizon])
 
+  useEffect(() => { api.current?.setMarks(marks) }, [marks])
   useEffect(() => { api.current?.setTheme() }, [theme])
   useEffect(() => { if (recenter) api.current?.recenter() }, [recenter])
 
-  return <div ref={hostRef} className="map-3d" />
+  return <div ref={hostRef} className={`map-3d${props.onPick ? ' picking' : ''}`} />
 }

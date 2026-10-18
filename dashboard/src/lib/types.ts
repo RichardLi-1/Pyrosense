@@ -37,6 +37,8 @@ export type HeatCell = { cx: number; cy: number; mean: number; weight: number; s
 export type TrailPoint = { ts: string; x: number; y: number; heading: number | null; voc: number; wearer?: string }
 
 export const DEFAULT_WEARER = 'A'
+/** Radio call sign for a wearer: FF-1, FF-2… in crew order (the raw id when it isn't on the crew list). */
+export const responderLabel = (crew: string[], id: string) => { const i = crew.indexOf(id); return i >= 0 ? `FF-${i + 1}` : id }
 export type Summary = { text: string; source: 'gemini' | 'fallback' }
 
 /** Where the dashboard's data comes from: the backend, or the in-browser demo. */

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { LEVEL_LABEL, SCALE, level, levelColor } from '../lib/colors'
-import type { Sensor } from '../lib/types'
+import { responderLabel, type Sensor } from '../lib/types'
 import { bearing, chooseNext } from '../lib/nextSample'
 import type { GasModel } from '../lib/gasModel'
 import { sampleAt } from '../lib/gasModel'
@@ -50,14 +50,14 @@ export function Sparkline({ points, width = 220, height = 36, color }: { points:
 }
 
 /** Shown only while an alert is recent. */
-export function AlertBanner({ alerts, now, holdMs = 30_000, crew = 1 }: { alerts: Alert[]; now: number; holdMs?: number; crew?: number }) {
+export function AlertBanner({ alerts, now, holdMs = 30_000, crew = [] }: { alerts: Alert[]; now: number; holdMs?: number; crew?: string[] }) {
   const [dismissed, setDismissed] = useState<string | null>(null)
   const a = alerts[0]
   if (!a || a.ts === dismissed || now - Date.parse(a.ts) > holdMs) return null
   const ago = Math.max(0, Math.round((now - Date.parse(a.ts)) / 1000))
   return (
     <div className="alert-banner" role="alert" onClick={() => setDismissed(a.ts)}>
-      <strong>High VOC{crew > 1 && a.wearer ? ` · ${a.wearer}` : ''}</strong>
+      <strong>High VOC{crew.length > 1 && a.wearer ? ` · ${responderLabel(crew, a.wearer)}` : ''}</strong>
       <span>VOC {fmt(a.voc)} {SCALE.short} at ({a.x.toFixed(1)}, {a.y.toFixed(1)}) m · {ago}s ago</span>
     </div>
   )
@@ -337,16 +337,24 @@ export function SensorTiles({ s, gas }: { s: Dashboard; gas: GasModel | null }) 
   )
 }
 
-/** Pick whose reading to show (only when there's more than one wearer). */
-export function Crew({ s, select, colors }: { s: Dashboard; select: (id: string) => void; colors: string[] }) {
+/**
+ * Responder selector: one responder (the rail shows their readings, the map dims everyone
+ * else) or All (everyone on the map; the rail keeps the last one picked). Only with a crew.
+ */
+export function Crew({ s, select, colors, only, setOnly }: {
+  s: Dashboard; select: (id: string) => void; colors: string[]; only: string | null; setOnly: (id: string | null) => void
+}) {
   if (s.crew.length < 2) return null
   return (
-    <div className="crew" role="group" aria-label="Firefighter">
+    <div className="crew" role="group" aria-label="Responder">
+      <button className={only == null ? 'on' : ''} onClick={() => setOnly(null)} title="Show every responder on the map">All</button>
       {s.crew.map((id, i) => {
         const v = s.wearers[id]?.voc
+        const label = responderLabel(s.crew, id)
         return (
-          <button key={id} className={id === s.selected ? 'on' : ''} onClick={() => select(id)} title={`Firefighter ${id}`}>
-            <i style={{ background: colors[i % colors.length] }} />{id}
+          <button key={id} className={only === id ? 'on' : only == null && id === s.selected ? 'sel' : ''}
+                  onClick={() => { select(id); setOnly(id) }} title={`Show only ${label}`}>
+            <i style={{ background: colors[i % colors.length] }} />{label}
             {v != null && <span className="mono" style={{ color: levelColor(v) }}>{v.toFixed(0)}</span>}
           </button>
         )

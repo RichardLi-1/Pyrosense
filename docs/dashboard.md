@@ -85,10 +85,11 @@ Input normalised over `[0, 500]` (SGP40 index). Alpha = `min(1, weight / W_ref)`
 
 | Action | Result |
 |---|---|
-| `F` | Toggle follow mode |
-| `U` | Toggle uncertainty view (heat layer shows variance instead of mean) |
-| `H` | Toggle heat layer |
-| `T` | Toggle trail |
+| `F` / Follow button | Toggle follow mode (camera tracks the selected responder) |
+| `H` `U` `T` `S` `N` `A` `M` | Toggle layers: gas map, uncertainty fog (GP sd), responder paths, source estimate, sample next, alerts, annotations. Same switches in the **Layers** popover |
+| All / FF-n (rail) | Show every responder, or one (others dimmed, their paths and alerts hidden) |
+| Exposure (header) | Per-responder cumulative dose this session, shared time axis and scale; hover to read everyone at one moment |
+| Mark toolbar (right) | Pick victim / fire / blocked exit / exit / stairs / hazard, then click the map (or *At FF-n's position*, `Enter`); `Esc` cancels. Stored per session in this browser |
 | Click alert | Camera jumps to it |
 | Click map | Tooltip: cell mean, samples, last measured |
 

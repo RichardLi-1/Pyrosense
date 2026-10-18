@@ -2,8 +2,10 @@ import { useEffect, useRef } from 'react'
 import { SCALE } from '../lib/colors'
 import { bandImage, isolines, kernelGrid, layerGrid, strokeIsolines, type HeatImage, type Isoline } from '../lib/heatImage'
 import { predict, predictedOnly } from '../lib/predict'
+import { drawMark, markKind } from '../lib/marks'
 import { chooseNext } from '../lib/nextSample'
-import { DEFAULT_WEARER } from '../lib/types'
+import { DEFAULT_WEARER, responderLabel } from '../lib/types'
+import { uncertaintyImage } from '../lib/uncertainty'
 import { drawHardHat } from './theme'
 import { TRAIL_S, crewColor, growBox, insets, knownBounds, type Box, type RendererProps } from './types'
 
@@ -97,6 +99,10 @@ export default function MapView(props: RendererProps) {
     const pg = predictedOnly(pred)
     predicted.current = { img: bandImage(pg, { minSupport: 0.5, alphaScale: 3.2 }), lines: isolines(pg, { minSupport: 0.5 }) }
   }, [gas, horizon, model, cells])
+
+  // Uncertainty: fog density = GP posterior sd / σf
+  const fog = useRef<HeatImage | null>(null)
+  useEffect(() => { fog.current = gas?.field ? uncertaintyImage(gas.field) : null }, [gas])
 
   // Source posterior: a soft haze where the gas most likely comes from.
   const haze = useRef<HeatImage | null>(null)
@@ -224,7 +230,7 @@ export default function MapView(props: RendererProps) {
 
       // heat on its own layer, clipped to scanned free space so it stops at walls
       const hm = heat.current
-      if (P.showHeat && hm && mapRect && free.current) {
+      if (P.layers.gas && hm && mapRect && free.current) {
         if (layer.width !== canvas.width || layer.height !== canvas.height) { layer.width = canvas.width; layer.height = canvas.height }
         lctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         lctx.globalCompositeOperation = 'source-over'
@@ -245,7 +251,7 @@ export default function MapView(props: RendererProps) {
 
       // predicted areas: striped band fills + thin contours, plus likely sources
       const pr = predicted.current
-      if (P.showHeat && pr) {
+      if (P.layers.gas && pr) {
         if (play.width !== canvas.width || play.height !== canvas.height) { play.width = canvas.width; play.height = canvas.height }
         pctx.setTransform(dpr, 0, 0, dpr, 0, 0)
         pctx.globalCompositeOperation = 'source-over'
@@ -267,16 +273,33 @@ export default function MapView(props: RendererProps) {
         ctx.drawImage(play, 0, 0)
         ctx.restore()
       }
+      // uncertainty fog, clipped to scanned free space like the heat
+      const fg = fog.current
+      if (P.layers.uncertainty && fg && mapRect && free.current && P.horizon == null) {
+        if (layer.width !== canvas.width || layer.height !== canvas.height) { layer.width = canvas.width; layer.height = canvas.height }
+        lctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+        lctx.globalCompositeOperation = 'source-over'
+        lctx.clearRect(0, 0, w, h)
+        lctx.imageSmoothingEnabled = true
+        lctx.drawImage(fg.canvas, sx(fg.x0), sy(fg.y1), fg.w * c.scale, fg.h * c.scale)
+        lctx.globalCompositeOperation = 'destination-in'
+        lctx.imageSmoothingEnabled = false
+        lctx.drawImage(free.current, ...mapRect)
+        ctx.save()
+        ctx.setTransform(1, 0, 0, 1, 0, 0)
+        ctx.drawImage(layer, 0, 0)
+        ctx.restore()
+      }
       // where the source most likely is
       const hz = haze.current
-      if (P.showHeat && hz && P.horizon == null) {
+      if (P.layers.source && hz && P.horizon == null) {
         ctx.save()
         ctx.globalCompositeOperation = T.heatBlend
         ctx.imageSmoothingEnabled = true
         ctx.drawImage(hz.canvas, sx(hz.x0), sy(hz.y1), hz.w * c.scale, hz.h * c.scale)
         ctx.restore()
       }
-      if (P.showHeat && P.model) {
+      if (P.layers.source && P.model && P.horizon == null) {
         ctx.save()
         ctx.setLineDash([3, 4])
         ctx.lineWidth = 1.25
@@ -294,7 +317,7 @@ export default function MapView(props: RendererProps) {
       }
       // where a reading would help most (GP variance), from where the selected wearer stands
       const nx = P.gas && P.horizon == null ? chooseNext(P.gas.next, me ?? P.pose, P.gas.field) : null
-      if (P.showHeat && nx) {
+      if (P.layers.next && nx) {
         const x = sx(nx.x), y = sy(nx.y), r = Math.max(8, nx.r * c.scale)
         ctx.save()
         ctx.strokeStyle = T.next
@@ -312,8 +335,9 @@ export default function MapView(props: RendererProps) {
 
       // trails: the last 90 s per wearer, fading with age (the heat carries VOC)
       const byWearer = new Map<string, typeof P.trail>()
-      if (P.showTrail) for (const pt of P.trail) {
+      if (P.layers.paths) for (const pt of P.trail) {
         const id = pt.wearer ?? DEFAULT_WEARER
+        if (P.only && id !== P.only) continue
         let list = byWearer.get(id)
         if (!list) byWearer.set(id, (list = []))
         list.push(pt)
@@ -340,6 +364,7 @@ export default function MapView(props: RendererProps) {
 
       // alerts: a small ring where each fired; a new one expands once
       for (const a of P.alerts) {
+        if (!P.layers.alerts || (P.only && a.wearer && a.wearer !== P.only)) continue
         if (!seenAlerts.has(a.ts)) {
           seenAlerts.add(a.ts)
           if (Date.now() - Date.parse(a.ts) < 15_000) rings.push({ x: a.x, y: a.y, t0: now })
@@ -362,14 +387,27 @@ export default function MapView(props: RendererProps) {
         ctx.globalAlpha = 1
       }
 
+      // commander's annotations
+      if (P.layers.marks) for (const mk of P.marks) {
+        drawMark(ctx, mk, sx(mk.x), sy(mk.y), 13, markKind(mk.kind).label)
+      }
+
       // wearers: hard-hat badges with heading cones; the selected one larger, with a pulse
       const crew = P.poses.length > 1
       for (const { id } of [...P.poses].sort((a, b) => (a.id === P.selected ? 1 : 0) - (b.id === P.selected ? 1 : 0))) {
         const sh = shown.get(id)
         if (!sh) continue
         const sel = id === P.selected
+        const dim = P.only != null && id !== P.only
         const x = sx(sh.x), y = sy(sh.y)
         const color = crewColor(T.crew, T.badge, P.poses, id)
+        ctx.globalAlpha = dim ? 0.3 : 1
+        if (dim) {
+          drawHardHat(ctx, x, y, 10, color, T.icon)
+          if (crew) { ctx.fillStyle = color; ctx.font = '600 11px Inter, system-ui, sans-serif'; ctx.textAlign = 'left'; ctx.fillText(responderLabel(P.crew, id), x + 14, y + 4) }
+          ctx.globalAlpha = 1
+          continue
+        }
         if (sel) {
           const pulse = (now % 2200) / 2200
           ctx.fillStyle = T.halo
@@ -391,7 +429,7 @@ export default function MapView(props: RendererProps) {
           ctx.fillStyle = color
           ctx.font = '600 11px Inter, system-ui, sans-serif'
           ctx.textAlign = 'left'
-          ctx.fillText(id, x + (sel ? 18 : 15), y + 4)
+          ctx.fillText(responderLabel(P.crew, id), x + (sel ? 18 : 15), y + 4)
         }
       }
     }
@@ -410,7 +448,8 @@ export default function MapView(props: RendererProps) {
       cam.cy = wy - (r.height / 2 - y) / cam.scale
     }
     let drag: { x: number; y: number } | null = null
-    const onDown = (e: MouseEvent) => { drag = pt(e) }
+    let down: { x: number; y: number } | null = null
+    const onDown = (e: MouseEvent) => { drag = down = pt(e) }
     const onMove = (e: MouseEvent) => {
       if (!drag || !cam) return
       const q = pt(e)
@@ -420,7 +459,16 @@ export default function MapView(props: RendererProps) {
       drag = q
       setManual()
     }
-    const onUp = () => { drag = null }
+    const onUp = (e: MouseEvent) => {
+      const q = down && pt(e)
+      // a click (not a drag) while placing an annotation drops it here
+      if (q && down && cam && P0().onPick && Math.hypot(q.x - down.x, q.y - down.y) < 5) {
+        const r = canvas.getBoundingClientRect()
+        P0().onPick!((q.x - r.width / 2) / cam.scale + cam.cx, (r.height / 2 - q.y) / cam.scale + cam.cy)
+      }
+      drag = down = null
+    }
+    const P0 = () => p.current
     const onDbl = () => { manual.current = false; p.current.onMoved(false) }
     canvas.addEventListener('wheel', onWheel, { passive: false })
     canvas.addEventListener('mousedown', onDown)
@@ -437,5 +485,5 @@ export default function MapView(props: RendererProps) {
     }
   }, [])
 
-  return <canvas ref={canvasRef} className="map-canvas" />
+  return <canvas ref={canvasRef} className={`map-canvas${props.onPick ? ' picking' : ''}`} />
 }

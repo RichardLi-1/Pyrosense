@@ -5,6 +5,7 @@ import { createDemoSource } from './lib/demo'
 import { backendReachable, createLiveSource } from './lib/live'
 import { useGasModel } from './lib/useGasModel'
 import type { DataSource } from './lib/types'
+import { DEFAULT_LAYERS, LAYERS, needsGasModel } from './map/layers'
 import { useDashboard } from './lib/useDashboard'
 
 const DESIGNS = { focus: Focus } as const
@@ -47,29 +48,30 @@ export default function App() {
 function Dashboard({ source, setSource }: { source: DataSource; setSource: (kind: 'live' | 'demo') => void }) {
   const { s, setUntil, loadSummary, select } = useDashboard(source)
   const [design, setDesign] = useState<DesignName>(initialDesign)
-  const [view, setView] = useState<ViewOptions>({ follow: false, showHeat: true, showTrail: true })
+  const [view, setView] = useState<ViewOptions>({ follow: false, layers: DEFAULT_LAYERS, only: null })
 
   useEffect(() => {
     try { localStorage.setItem('design', design) } catch { /* ignore */ }
   }, [design])
 
-  // F follow · H heat · T trail · 1-3 design
+  // F follow · layer shortcuts (H gas, U uncertainty, T paths, S source, N next, A alerts, M marks) · 1-3 design
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey) return
+      if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey || e.altKey) return
       const k = e.key.toLowerCase()
+      const layer = LAYERS.find((l) => l.shortcut.toLowerCase() === k)
       if (k === 'f') setView((v) => ({ ...v, follow: !v.follow }))
-      else if (k === 'h') setView((v) => ({ ...v, showHeat: !v.showHeat }))
-      else if (k === 't') setView((v) => ({ ...v, showTrail: !v.showTrail }))
+      else if (layer) setView((v) => ({ ...v, layers: { ...v.layers, [layer.key]: !v.layers[layer.key] } }))
       else if (k >= '1' && k <= String(NAMES.length)) setDesign(NAMES[Number(k) - 1])
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const gas = useGasModel(s.meta, s.image, s.heat, view.showHeat)
+  const gas = useGasModel(s.meta, s.image, s.heat, needsGasModel(view.layers))
   const Design = DESIGNS[design]
-  const props: DesignProps = useMemo(() => ({ s, setUntil, loadSummary, view, select, gas, setSource }), [s, setUntil, loadSummary, view, select, gas, setSource])
+  const props: DesignProps = useMemo(() => ({ s, setUntil, loadSummary, view, setView, select, gas, setSource }),
+                                     [s, setUntil, loadSummary, view, select, gas, setSource])
   return (
     <div className={`t-${design}`}>
       <Design {...props} />

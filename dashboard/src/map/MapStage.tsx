@@ -1,6 +1,8 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { RAMP_BANDS, SCALE, levelRanges, rampGradient, rampT } from '../lib/colors'
 import { HORIZONS } from '../lib/forecast'
+import { responderLabel } from '../lib/types'
+import { LAYERS, type LayerKey, type Layers } from './layers'
 import MapView from './MapView'
 import type { MapProps } from './types'
 
@@ -23,8 +25,51 @@ const LEGEND = [
   { key: 'alert', label: 'Hazardous' },
 ] as const
 
-/** The map, a 2D/3D switch, a Recenter button when the view has moved, and the legend. */
-export default function MapStage(props: MapProps & { legend?: boolean }) {
+/** Switches for what the map draws. */
+function LayersMenu({ layers, set }: { layers: Layers; set: (k: LayerKey, on: boolean) => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const close = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false) }
+    const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    window.addEventListener('pointerdown', close)
+    window.addEventListener('keydown', esc)
+    return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', esc) }
+  }, [open])
+  const off = LAYERS.filter((l) => !layers[l.key]).length
+  return (
+    <div className="layers" ref={ref}>
+      <button className={`map-btn${open ? ' on' : ''}`} onClick={() => setOpen(!open)} aria-expanded={open} title="Choose what the map shows">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round">
+          <path d="M8 2 1.5 5.5 8 9l6.5-3.5Z" /><path d="m1.5 8.5 6.5 3.5 6.5-3.5" /><path d="m1.5 11.2 6.5 3.3 6.5-3.3" opacity=".55" />
+        </svg>
+        Layers{off > 0 && <span className="layers-count mono">{LAYERS.length - off}/{LAYERS.length}</span>}
+      </button>
+      {open && (
+        <div className="layers-pop" role="group" aria-label="Map layers">
+          {LAYERS.map((l) => (
+            <label key={l.key} className="switch-row" title={l.hint}>
+              <span className="switch-text"><span>{l.label}</span><small>{l.hint}</small></span>
+              <kbd>{l.shortcut}</kbd>
+              <input type="checkbox" role="switch" checked={layers[l.key]} onChange={(e) => set(l.key, e.target.checked)} />
+              <i className="switch" aria-hidden />
+            </label>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+type StageProps = MapProps & {
+  legend?: boolean
+  setLayer?: (k: LayerKey, on: boolean) => void
+  setFollow?: (on: boolean) => void
+}
+
+/** The map, a 2D/3D switch, layer switches, Follow, a Recenter button when the view has moved, and the legend. */
+export default function MapStage(props: StageProps) {
   const [mode, setMode] = useState<Mode>(savedMode)
   const [moved, setMoved] = useState(false)
   const [recenter, setRecenter] = useState(0)
@@ -48,9 +93,9 @@ export default function MapStage(props: MapProps & { legend?: boolean }) {
   }, [doRecenter])
 
   const [horizon, setHorizon] = useState<number | null>(null)
-  const gas = props.showHeat ? props.gas ?? null : null
+  const gas = props.gas ?? null
   const model = gas?.source ?? null
-  const r = { ...props, recenter, onMoved, model, gas, horizon: mode === '2d' ? horizon : null }
+  const r = { ...props, recenter, onMoved, model, gas, horizon: mode === '2d' && props.layers.gas ? horizon : null }
   return (
     <>
       {mode === '2d' ? <MapView {...r} /> : <Suspense fallback={null}><Map3D {...r} firstPerson={mode === 'fp'} /></Suspense>}
@@ -66,7 +111,17 @@ export default function MapStage(props: MapProps & { legend?: boolean }) {
             {mode === 'fp' ? 'Look ahead' : 'Recenter'}
           </button>
         )}
-        {mode === '2d' && gas?.forecast && (
+        {props.setLayer && <LayersMenu layers={props.layers} set={props.setLayer} />}
+        {props.setFollow && mode !== 'fp' && props.pose && (
+          <button className={`map-btn follow${props.follow ? ' on' : ''}`} onClick={() => props.setFollow!(!props.follow)}
+                  aria-pressed={props.follow} title="Keep the camera on the selected responder (F)">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6">
+              <path d="M8 1.5 13.5 14 8 11 2.5 14Z" strokeLinejoin="round" />
+            </svg>
+            {props.follow ? 'Following' : 'Follow'} {responderLabel(props.crew, props.selected)}
+          </button>
+        )}
+        {mode === '2d' && props.layers.gas && gas?.forecast && (
           <div className="map-seg" role="group" aria-label="Forecast" title="Projected spread by diffusion through the mapped floor plan (no airflow model)">
             <button className={horizon == null ? 'on' : ''} onClick={() => setHorizon(null)}>Now</button>
             {HORIZONS.map((h) => (
