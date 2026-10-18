@@ -16,6 +16,7 @@ from .foxglove import FoxgloveClient
 from .gemini import Summarizer
 from .ingest import Ingest
 from .state import Broadcaster, LiveState
+from .warnings import WarningEngine
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("main")
@@ -35,10 +36,17 @@ def create_app(settings: Settings | None = None, *, connect_bridge: bool = True)
         st.alerts = AlertEngine(settings.voc_threshold, settings.voc_hold_seconds, settings.alert_cooldown_seconds)
         st.summarizer = Summarizer(settings.gemini_api_key, settings.gemini_model, settings.summary_cache_seconds,
                                    unit=settings.voc_unit)
-        st.ingest = Ingest(settings, st.live, st.db, st.bus, st.alerts)
+        st.warnings = WarningEngine(
+            threshold=settings.warn_threshold, hold_seconds=settings.warn_hold_seconds,
+            cooldown_seconds=settings.warn_cooldown_seconds, unit=settings.voc_unit,
+            gemini_client=st.summarizer._client, gemini_model=settings.gemini_model,
+            eleven_key=settings.elevenlabs_api_key, eleven_voice=settings.elevenlabs_voice_id,
+            eleven_model=settings.elevenlabs_model, publish=st.bus.publish)
+        st.ingest = Ingest(settings, st.live, st.db, st.bus, st.alerts, st.warnings)
         st.bridge = FoxgloveClient(settings.bridge_url, TOPICS, st.ingest.on_message)
-        log.info("session=%s bridge=%s db=%s gemini=%s", settings.session, settings.bridge_url,
-                 "on" if settings.database_url else "off", "on" if st.summarizer.enabled else "fallback")
+        log.info("session=%s bridge=%s db=%s gemini=%s voice=%s warn>%s", settings.session, settings.bridge_url,
+                 "on" if settings.database_url else "off", "on" if st.summarizer.enabled else "fallback",
+                 "elevenlabs" if settings.elevenlabs_api_key else "browser", settings.warn_threshold)
         await st.db.start()
         tasks = []
         if connect_bridge:

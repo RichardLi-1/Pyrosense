@@ -11,13 +11,15 @@ from .config import TOPIC_MAP, TOPIC_POSE, TOPIC_VOC, TOPIC_VOC_POINTS, Settings
 from .db import Database
 from .ros import map_from_msg, map_to_png, point_times, points_from_pointcloud, pose_from_msg, stamp_to_datetime
 from .state import Broadcaster, LiveState
+from .warnings import WarningEngine, trend_words
 
 log = logging.getLogger("ingest")
 
 
 class Ingest:
     def __init__(self, settings: Settings, state: LiveState, db: Database, bus: Broadcaster,
-                 alerts: AlertEngine) -> None:
+                 alerts: AlertEngine, warnings: WarningEngine | None = None) -> None:
+        self.warnings = warnings
         self.s = settings
         self.state = state
         self.db = db
@@ -50,6 +52,17 @@ class Ingest:
                   "warmed_up": bool(getattr(msg, "warmed_up", True))}
         self.state.sensor = sensor
         self.bus.publish({"t": "sensor", **sensor})
+        if self.warnings is not None and sensor["voc"] is not None and sensor["warmed_up"]:
+            self.warnings.observe(float(sensor["voc"]), lambda: self._warning_context(float(sensor["voc"])))
+
+    def _warning_context(self, voc: float) -> dict:
+        pose = self.state.pose
+        win = list(self.state.voc_window)
+        dose = 0.0
+        for (t0, v0), (t1, v1) in zip(win, win[1:]):
+            dose += (v0 + v1) / 2 * (t1 - t0) / 60.0
+        return {"voc": voc, "x": pose.x if pose else 0.0, "y": pose.y if pose else 0.0,
+                "eco2": (self.state.sensor or {}).get("eco2"), "trend": trend_words(win), "dose": dose}
 
     def _on_pose(self, msg) -> None:
         pose = pose_from_msg(msg)

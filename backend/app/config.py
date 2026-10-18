@@ -40,6 +40,13 @@ class Settings:
     voc_unit: str = field(default_factory=lambda: _env("VOC_UNIT", "ppb"))  # ppb (SGP30 TVOC) | index (SGP40)
     voc_threshold: float = field(default_factory=lambda: float(_env("VOC_THRESHOLD", "2200")))
     voc_hold_seconds: float = field(default_factory=lambda: float(_env("VOC_HOLD_SECONDS", "5")))
+    # spoken warnings (Gemini text + ElevenLabs voice) at a lower level than the exposure alert
+    warn_threshold: float = field(default_factory=lambda: float(_env("WARN_THRESHOLD", "100")))
+    warn_hold_seconds: float = field(default_factory=lambda: float(_env("WARN_HOLD_SECONDS", "3")))
+    warn_cooldown_seconds: float = field(default_factory=lambda: float(_env("WARN_COOLDOWN_SECONDS", "90")))
+    elevenlabs_api_key: str | None = field(default_factory=lambda: os.environ.get("ELEVENLABS_API_KEY") or None)
+    elevenlabs_voice_id: str = field(default_factory=lambda: _env("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"))
+    elevenlabs_model: str = field(default_factory=lambda: _env("ELEVENLABS_MODEL", "eleven_flash_v2_5"))
     alert_cooldown_seconds: float = field(default_factory=lambda: float(_env("ALERT_COOLDOWN_SECONDS", "60")))
     db_flush_seconds: float = field(default_factory=lambda: float(_env("DB_FLUSH_SECONDS", "1.0")))
     db_max_buffer_rows: int = field(default_factory=lambda: int(_env("DB_MAX_BUFFER_ROWS", "50000")))

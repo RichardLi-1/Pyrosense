@@ -55,6 +55,7 @@ ROS-specific is installed on the backend host.
 | `sensor` | `ts, voc, unit, eco2, raw_h2, raw_ethanol, temperature, humidity, warmed_up` | each raw `/voc` frame (2 Hz); latest copy also in `hello.sensor` |
 | `alert` | `id, ts, x, y, voc, threshold, map_png_url` | alert engine fires |
 | `bridge` | `connected` | Pi link up/down |
+| `warning` | `id, ts, voc, unit, level, x, y, text, source (gemini\|fallback), audio_url, voice (elevenlabs\|browser)` | live reading above `WARN_THRESHOLD` (100 ppb) for 3 s, 90 s cooldown; text by Gemini, mp3 by ElevenLabs when keys are set |
 
 `/map` returns a north-up RGBA PNG (image row 0 = max y) with `X-Map-Origin`, `X-Map-Res`,
 `X-Map-Size`, `X-Map-Version` headers. Pixel `(col,row)` covers world
@@ -69,6 +70,7 @@ ROS-specific is installed on the backend host.
 | `GET /map?session=` · `GET /map/meta` | live occupancy PNG / its metadata |
 | `GET /alerts?session=` · `GET /alerts/{id}/map.png` | history + map snapshot at alert time |
 | `GET /summary?session=&force=` | Gemini report (cached 60 s); deterministic fallback text when no key |
+| `GET /warnings` · `GET /warnings/{id}/audio.mp3` · `POST /warnings/test` | recent spoken warnings, their audio, and a manual trigger |
 | `GET /sessions` | sessions in `readings`, joined with saved name/notes and `map_png_url` |
 | `POST /session/save` `{name, notes}` | name the current scan and store its floor plan (catalog) |
 | `POST /session/restart` `{name?}` | save current, ask the Pi (`:8766/restart`) to restart SLAM + VOC buffer, open a new session |
