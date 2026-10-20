@@ -145,6 +145,7 @@ html.forced .scroll-space { height: 100vh; }
 .btn-ghost { color: var(--text); border: 1px solid rgba(238,241,246,.24); }
 .btn-ghost:hover { border-color: rgba(238,241,246,.6); }
 .foot { position: absolute; left: var(--gutter); bottom: 28px; font-size: 12px; color: var(--muted); letter-spacing: 0.02em; }
+.foot a { pointer-events: auto; color: var(--text); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(238,241,246,.35); }
 
 /* ---- small screens ------------------------------------------------------ */
 @media (max-width: 767px) {

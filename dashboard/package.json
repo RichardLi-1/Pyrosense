@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "deploy:cf": "npm run build && wrangler deploy",
+    "dev:cf": "npm run build && wrangler dev"
   },
   "dependencies": {
     "react": "^19.2.8",
@@ -22,6 +24,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "oxlint": "^1.81.0",
     "typescript": "~6.0.2",
-    "vite": "^8.3.0"
+    "vite": "^8.3.0",
+    "wrangler": "^4.151.2"
   }
 }

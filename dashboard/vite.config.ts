@@ -24,10 +24,11 @@ export default defineConfig({
   plugins: [react(), landingSlash],
   build: {
     rollupOptions: {
-      // two pages: the dashboard (index.html) and the landing page (/landing/)
+      // the dashboard (index.html), the landing page (/landing/) and its tech-stack page
       input: {
         main: fileURLToPath(new URL('./index.html', import.meta.url)),
         landing: fileURLToPath(new URL('./landing/index.html', import.meta.url)),
+        architecture: fileURLToPath(new URL('./landing/architecture.html', import.meta.url)),
       },
     },
   },

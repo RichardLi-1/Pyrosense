@@ -1,0 +1,21 @@
+// Cloudflare deploy of the dashboard + landing page:  npm run deploy:cf  (builds, then `wrangler deploy`).
+// Static files come from dist/; /api/* and /ws/* run the Worker, which proxies them to the Vultr backend.
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pyrosense",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    // unknown paths fall back to the dashboard's index.html; /landing redirects to /landing/
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/ws/*"]
+  },
+  "vars": {
+    // The Vultr VM's nginx. A hostname is required (Cloudflare blocks fetches to bare IPs);
+    // sslip.io resolves 216-128-184-212.sslip.io to 216.128.184.212. Swap in a real domain once there is one.
+    "BACKEND": "http://216-128-184-212.sslip.io"
+  },
+  "observability": { "enabled": true }
+}
