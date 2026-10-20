@@ -277,4 +277,4 @@ async def ws_live(ws: WebSocket, session: str | None = None):
 
 @router.get("/")
 async def index():
-    return JSONResponse({"name": "PROJECT_NAME backend", "docs": "/docs", "live": "/ws/live"})
+    return JSONResponse({"name": "PyroSense backend", "docs": "/docs", "live": "/ws/live"})

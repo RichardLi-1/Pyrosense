@@ -1,7 +1,7 @@
 [project]
 name = "hazard-backend"
 version = "0.1.0"
-description = "PROJECT_NAME backend: Foxglove ingest -> live cache + Tiger Data; REST + /ws/live; alerts; Gemini summary"
+description = "PyroSense backend: Foxglove ingest -> live cache + Tiger Data; REST + /ws/live; alerts; Gemini summary"
 requires-python = ">=3.12"
 dependencies = [
   "fastapi>=0.115",

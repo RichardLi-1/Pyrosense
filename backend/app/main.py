@@ -76,7 +76,7 @@ def create_app(settings: Settings | None = None, *, connect_bridge: bool = True)
                     pass
             await st.db.stop()
 
-    app = FastAPI(title="PROJECT_NAME backend", lifespan=lifespan)
+    app = FastAPI(title="PyroSense backend", lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
                        expose_headers=["X-Map-Origin", "X-Map-Res", "X-Map-Size", "X-Map-Version"])
     app.include_router(router)
