@@ -1,0 +1,13 @@
+# Copy to dashboard/.dev.vars for `npm run dev:cf` (wrangler dev). Never commit .dev.vars.
+# In production these are set on Cloudflare instead:
+#   npx wrangler secret put DISCORD_WEBHOOK_URL
+#   npx wrangler secret put DISCORD_REFERRAL_WEBHOOK_URL
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/<webhook-id>/<webhook-token>
+
+# Optional: visitors who came from a referral (Resume, LinkedIn, ?utm_source=resume_rl, ChatGPT…)
+# get their own channel: all their visits, bounces and clicks. Blank = they use the one above.
+DISCORD_REFERRAL_WEBHOOK_URL=
+
+# Optional: override the backend the Worker proxies /api/* and /ws/* to (default in wrangler.jsonc).
+# Must be a hostname, not a bare IP.
+# BACKEND=http://216-128-184-212.sslip.io

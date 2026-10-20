@@ -1,16 +1,19 @@
 // Cloudflare deploy of the dashboard + landing page:  npm run deploy:cf  (builds, then `wrangler deploy`).
-// Static files come from dist/; /api/* and /ws/* run the Worker, which proxies them to the Vultr backend.
+// Static files come from dist/. The Worker runs first on every request: /api/track posts visits to
+// Discord, /api/* and /ws/* are proxied to the Vultr backend, and page requests are checked for
+// AI-assistant fetchers. Secret: `npx wrangler secret put DISCORD_WEBHOOK_URL` (docs/visitor-tracking.md).
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "pyrosense",
-  "main": "worker/index.js",
+  "main": "worker/index.ts",
   "compatibility_date": "2026-09-01",
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
     // unknown paths fall back to the dashboard's index.html; /landing redirects to /landing/
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/ws/*"]
+    // every request, so the Worker can see AI assistants fetching pages (they never run our JS)
+    "run_worker_first": true
   },
   "vars": {
     // The Vultr VM's nginx. A hostname is required (Cloudflare blocks fetches to bare IPs);

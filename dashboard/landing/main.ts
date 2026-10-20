@@ -6,9 +6,12 @@ import { Mock } from './mock'
 import { Post } from './post'
 import { World } from './world'
 import { createOdometer } from './odometer'
+import { startTracking } from '../src/lib/track'
 import { T, cellPx, clamp, isMobile, lerp, levelOf, reducedMotion, span, vocAt, win } from './util'
 
 const $ = <E extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as E
+
+startTracking() // visitor → Discord (docs/visitor-tracking.md); keeps ?p / ?t below
 
 // ?p=0.35 forces scroll progress (screenshots, debugging)
 const params = new URLSearchParams(location.search)

@@ -7,3 +7,4 @@ __pycache__/
 dashboard/node_modules/
 dashboard/dist/
 .gstack/
+backend/.env.draft

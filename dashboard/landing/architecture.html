@@ -150,6 +150,10 @@
       <p class="foot">Built at Hack the Valley 11</p>
     </main>
 
+    <script type="module">
+      import { startTracking } from '../src/lib/track'
+      startTracking() // visitor → Discord (docs/visitor-tracking.md)
+    </script>
     <script>
       // Connectors, recomputed whenever the layout changes. Lines are straight or one elbow,
       // and between regions they stay in the gaps, so nothing is drawn across a chip.
