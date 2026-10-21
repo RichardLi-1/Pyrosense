@@ -29,7 +29,7 @@ const testBuildBadge: Plugin = {
   if (!/^(localhost|127\\.|0\\.0\\.0\\.0|\\[::1\\]|10\\.|192\\.168\\.|172\\.(1[6-9]|2\\d|3[01])\\.)|\\.local$/.test(h)) return
   const b = document.createElement('div')
   b.textContent = 'TEST BUILD'
-  b.style.cssText = 'position:fixed;bottom:6px;left:6px;z-index:2147483647;padding:1px 4px;border-radius:3px;' +
+  b.style.cssText = 'position:fixed;top:6px;left:6px;z-index:2147483647;padding:1px 4px;border-radius:3px;' +
     'background:#facc15;color:#000;font:700 8px/1.3 system-ui,sans-serif;letter-spacing:.06em;' +
     'opacity:.35;pointer-events:none'
   document.body.appendChild(b)
