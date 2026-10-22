@@ -122,6 +122,8 @@ export function startTracking() {
   // that names one, or a bare AI referrer when the URL had no params at all.
   const aiIsSource = !fromParams && aiAssistant !== null && (aiAssistantFromHost(landingParams.get('utm_source')) !== null || !rawParams)
   if (aiIsSource) { referral = aiAssistant; store.set(localStorage, REFERRAL_KEY, aiAssistant!) }
+  // An unlisted utm_source is a new, unknown source: don't let an older remembered one (e.g. Resume) label it.
+  else if (!fromParams && landingParams.has('utm_source')) referral = null
 
   // ─── Bounce: only this page, gone within 10 s ──────────────────────────────
   const onBounce = () => {

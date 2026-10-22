@@ -17,5 +17,6 @@ export const REFERRAL_SOURCES: Record<string, string> = {
 //   ?utm_source=resume_rl → "Resume" (the link on Richard's resume)
 export const UTM_SOURCES: Record<string, string> = {
   resume_rl: "Richard's Resume",
+  devpost: "Devpost",
 }
 // ──────────────────────────────────────────────────────────────────────────────

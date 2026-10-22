@@ -243,7 +243,7 @@ export function scoreVisit(signals: Partial<HumanSignals>, headers: HeaderReader
   return {
     score,
     label: score >= 70 ? "likely human" : score >= 40 ? "unsure" : "likely bot",
-    reasons: [...client.reasons, ...server.reasons],
+    reasons: [`${BASELINE} baseline`, ...client.reasons, ...server.reasons],
   }
 }
 
