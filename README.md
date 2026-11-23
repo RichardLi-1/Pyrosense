@@ -1,6 +1,6 @@
 ![PyroSense dashboard](resources/Screenshot%202026-11-22%20at%208.09.54%E2%80%AFPM.png)
 
-<video src="resources/1018%281%29.mp4" controls width="100%"></video>
+https://github.com/user-attachments/assets/a8084246-e33a-4686-a600-9c0fa221fba7
 
 [▶ Watch the demo](resources/1018%281%29.mp4)
 
